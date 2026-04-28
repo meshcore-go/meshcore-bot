@@ -11,7 +11,7 @@ RUN case "${TARGETPLATFORM}" in \
       "linux/amd64")    BIN="meshcore-bot-linux-amd64/meshcore-bot-linux-amd64" ;; \
       "linux/arm/v6")   BIN="meshcore-bot-linux-armv6/meshcore-bot-linux-armv6" ;; \
       "linux/arm/v7")   BIN="meshcore-bot-linux-armv7/meshcore-bot-linux-armv7" ;; \
-      "linux/arm64/v8") BIN="meshcore-bot-linux-arm64/meshcore-bot-linux-arm64" ;; \
+      "linux/arm64"*)   BIN="meshcore-bot-linux-arm64/meshcore-bot-linux-arm64" ;; \
       "linux/ppc64le")  BIN="meshcore-bot-linux-ppc64le/meshcore-bot-linux-ppc64le" ;; \
       "linux/riscv64")  BIN="meshcore-bot-linux-riscv64/meshcore-bot-linux-riscv64" ;; \
       "linux/s390x")    BIN="meshcore-bot-linux-s390x/meshcore-bot-linux-s390x" ;; \
