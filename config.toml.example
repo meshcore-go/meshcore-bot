@@ -1,0 +1,22 @@
+# Connection Node type
+nodeType = "kiss"
+
+# Connection Settings
+connection = "serial:///dev/ttyACM0"
+baudRate = 115200
+
+# Radio Settings - Only for KISS
+freq = 917.375
+bw = 62.50
+sf = 7
+cr = 8
+tx = 22
+
+[[bot]]
+name = "Ping Bot"
+
+[[bot.trigger]]
+type = "group"
+template = "@[{{.Sender}}] HashSize={{.PathHashSize}} Hops={{.Hops}} Paths={{.PathHashes | formatPathBytes}}"
+channels = ["#testing"]
+match = ["(?i)^test*", "(?i)^ping*"]

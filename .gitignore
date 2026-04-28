@@ -30,3 +30,14 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+*.toml
+*.yaml
+*.yml
+*.json
+
+!.github/workflows/*.yml
+!.github/workflows/*.yaml
+
+# Docker build staging
+docker/bin/
