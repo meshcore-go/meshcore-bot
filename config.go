@@ -96,7 +96,7 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-func UnmarshalConfingJson(data []byte) (*Config, error) {
+func UnmarshalConfigJson(data []byte) (*Config, error) {
 	var cfg Config
 	err := json.Unmarshal(data, &cfg)
 	if err != nil {
@@ -106,7 +106,7 @@ func UnmarshalConfingJson(data []byte) (*Config, error) {
 	return &cfg, nil
 }
 
-func UnmarshalConfingYaml(data []byte) (*Config, error) {
+func UnmarshalConfigYaml(data []byte) (*Config, error) {
 	var cfg Config
 	err := yaml.Unmarshal(data, &cfg)
 	if err != nil {
@@ -116,7 +116,7 @@ func UnmarshalConfingYaml(data []byte) (*Config, error) {
 	return &cfg, nil
 }
 
-func UnmarshalConfingToml(data []byte) (*Config, error) {
+func UnmarshalConfigToml(data []byte) (*Config, error) {
 	var cfg Config
 	err := toml.Unmarshal(data, &cfg)
 	if err != nil {
