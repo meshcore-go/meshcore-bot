@@ -362,11 +362,11 @@ func loadConfigFromPath(path string) (*Config, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".toml":
-		return UnmarshalConfingToml(data)
+		return UnmarshalConfigToml(data)
 	case ".yaml", ".yml":
-		return UnmarshalConfingYaml(data)
+		return UnmarshalConfigYaml(data)
 	case ".json":
-		return UnmarshalConfingJson(data)
+		return UnmarshalConfigJson(data)
 	default:
 		return nil, fmt.Errorf("unsupported config format %q", ext)
 	}
