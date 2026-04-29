@@ -108,7 +108,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	observers, err := startObservers(ctx, cfg, mux, ms.modem, ms.stats)
+	observers, err := startObservers(ctx, cfg, mux, ms.stats)
 	if err != nil {
 		slog.Error("mqtt observer startup failed", "error", err)
 	}
@@ -157,7 +157,7 @@ func main() {
 				os.Exit(1)
 			}
 
-			observers, err = startObservers(ctx, newCfg, mux, ms.modem, ms.stats)
+			observers, err = startObservers(ctx, newCfg, mux, ms.stats)
 			if err != nil {
 				slog.Error("mqtt observer restart failed after reload", "error", err)
 			}
@@ -366,7 +366,7 @@ func stopBots(bots []*Bot) {
 	}
 }
 
-func startObservers(ctx context.Context, cfg *Config, mux *node.RadioMux, modem node.Modem, stats StatsProvider) ([]*MqttObserver, error) {
+func startObservers(ctx context.Context, cfg *Config, mux *node.RadioMux, stats StatsProvider) ([]*MqttObserver, error) {
 	var observers []*MqttObserver
 	for _, obsCfg := range cfg.Observers {
 		keyFile := "mqtt_identity.key"
@@ -379,7 +379,7 @@ func startObservers(ctx context.Context, cfg *Config, mux *node.RadioMux, modem 
 			return nil, fmt.Errorf("mqtt identity: %w", err)
 		}
 
-		obs, err := NewMqttObserver(obsCfg, mux, modem, id, stats)
+		obs, err := NewMqttObserver(obsCfg, mux, id, stats)
 		if err != nil {
 			stopObservers(observers)
 			return nil, fmt.Errorf("creating mqtt observer: %w", err)

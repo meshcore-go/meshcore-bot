@@ -4,9 +4,9 @@ go 1.26.1
 
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
-	github.com/meshcore-go/meshcore-go v1.0.1
-	github.com/meshcore-go/meshcore-go/companion/transport v1.0.1
-	github.com/meshcore-go/meshcore-go/hardware/transport v1.0.1
+	github.com/meshcore-go/meshcore-go v1.0.2
+	github.com/meshcore-go/meshcore-go/companion/transport v1.0.2
+	github.com/meshcore-go/meshcore-go/hardware/transport v1.0.2
 	github.com/pelletier/go-toml/v2 v2.3.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/pflag v1.0.10
