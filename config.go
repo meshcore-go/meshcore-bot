@@ -44,6 +44,9 @@ type Config struct {
 
 	// Bots
 	Bots []BotConfig `json:"bots" yaml:"bots" toml:"bot"`
+
+	// MQTT Observers/Publishers
+	Observers []MqttConfig `json:"observers" yaml:"observers" toml:"observer"`
 }
 
 func DefaultConfig() Config {

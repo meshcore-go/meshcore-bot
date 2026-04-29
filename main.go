@@ -20,7 +20,7 @@ import (
 	flag "github.com/spf13/pflag"
 )
 
-var version = "v1.0.0"
+var version = "v1.0.1-dev"
 
 var defaultConfigNames = []string{
 	"config.toml",
@@ -36,6 +36,7 @@ func (f closerFunc) Close() error { f(); return nil }
 type modemState struct {
 	modem       node.Modem
 	companionCl *companionClient.Client
+	stats       StatsProvider
 	closers     []io.Closer
 }
 
@@ -68,8 +69,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if len(cfg.Bots) == 0 {
-		fmt.Fprintln(os.Stderr, "Error: no bots configured")
+	if len(cfg.Bots) == 0 && len(cfg.Observers) == 0 {
+		fmt.Fprintln(os.Stderr, "Error: no bots or observers configured")
 		os.Exit(1)
 	}
 
@@ -86,19 +87,27 @@ func main() {
 		os.Exit(1)
 	}
 
-	bots, err := startBots(ctx, cfg, ms)
+	mux := node.NewRadioMux(ms.modem)
+
+	bots, err := startBots(ctx, cfg, ms, mux)
 	if err != nil {
 		ms.Close()
 		slog.Error("bot startup failed", "error", err)
 		os.Exit(1)
 	}
 
+	observers, err := startObservers(ctx, cfg, mux, ms.stats)
+	if err != nil {
+		slog.Error("mqtt observer startup failed", "error", err)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
+			slog.Info("shutting down...")
+			stopObservers(observers)
 			stopBots(bots)
 			ms.Close()
-			slog.Info("shutting down...")
 			return
 
 		case <-sighup:
@@ -110,11 +119,12 @@ func main() {
 				continue
 			}
 
-			if len(newCfg.Bots) == 0 {
-				slog.Error("reloaded config has no bots, keeping current config")
+			if len(newCfg.Bots) == 0 && len(newCfg.Observers) == 0 {
+				slog.Error("reloaded config has no bots or observers, keeping current config")
 				continue
 			}
 
+			stopObservers(observers)
 			stopBots(bots)
 
 			if modemConfigChanged(cfg, newCfg) {
@@ -126,12 +136,18 @@ func main() {
 					slog.Error("modem reconnect failed", "error", err)
 					os.Exit(1)
 				}
+				mux = node.NewRadioMux(ms.modem)
 			}
 
-			bots, err = startBots(ctx, newCfg, ms)
+			bots, err = startBots(ctx, newCfg, ms, mux)
 			if err != nil {
 				slog.Error("bot restart failed after reload", "error", err)
 				os.Exit(1)
+			}
+
+			observers, err = startObservers(ctx, newCfg, mux, ms.stats)
+			if err != nil {
+				slog.Error("mqtt observer restart failed after reload", "error", err)
 			}
 
 			cfg = newCfg
@@ -242,6 +258,14 @@ func setupModem(ctx context.Context, cfg *Config) (*modemState, error) {
 		}
 		slog.Info("SET_TX_POWER", "tx", *cfg.TX)
 
+		ms.stats = NewKissStatsProvider(kissModem, RadioInfo{
+			FreqHz:  uint32(*cfg.Freq * 1000000),
+			BwHz:    uint32(*cfg.Bw * 1000),
+			SF:      *cfg.SF,
+			CR:      *cfg.CR,
+			TxPower: *cfg.TX,
+		})
+
 		ms.modem = kissModem
 
 	case "companion":
@@ -273,10 +297,12 @@ func setupModem(ctx context.Context, cfg *Config) (*modemState, error) {
 		}
 		ms.closers = append(ms.closers, client)
 
-		if _, err := client.AppStart(connectCtx, 1, "meshcore-bot"); err != nil {
+		selfInfo, err := client.AppStart(connectCtx, 1, "meshcore-bot")
+		if err != nil {
 			ms.Close()
 			return nil, fmt.Errorf("companion app start: %w", err)
 		}
+		ms.stats = NewCompanionStatsProvider(client, selfInfo)
 
 		compModem := companionClient.NewCompanionModem(ctx, client)
 		ms.closers = append(ms.closers, closerFunc(compModem.Close))
@@ -290,8 +316,7 @@ func setupModem(ctx context.Context, cfg *Config) (*modemState, error) {
 	return ms, nil
 }
 
-func startBots(ctx context.Context, cfg *Config, ms *modemState) ([]*Bot, error) {
-	mux := node.NewRadioMux(ms.modem)
+func startBots(ctx context.Context, cfg *Config, ms *modemState, mux *node.RadioMux) ([]*Bot, error) {
 
 	var sf SenderFactory
 	switch *cfg.NodeType {
@@ -326,6 +351,40 @@ func startBots(ctx context.Context, cfg *Config, ms *modemState) ([]*Bot, error)
 func stopBots(bots []*Bot) {
 	for _, b := range bots {
 		b.Stop()
+	}
+}
+
+func startObservers(ctx context.Context, cfg *Config, mux *node.RadioMux, stats StatsProvider) ([]*MqttObserver, error) {
+	var observers []*MqttObserver
+	for _, obsCfg := range cfg.Observers {
+		keyFile := "mqtt_identity.key"
+		if obsCfg.KeyFile != nil && *obsCfg.KeyFile != "" {
+			keyFile = *obsCfg.KeyFile
+		}
+
+		id, err := loadOrCreateIdentity(keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("mqtt identity: %w", err)
+		}
+
+		obs, err := NewMqttObserver(obsCfg, mux, id, stats)
+		if err != nil {
+			stopObservers(observers)
+			return nil, fmt.Errorf("creating mqtt observer: %w", err)
+		}
+		if err := obs.Start(ctx); err != nil {
+			stopObservers(observers)
+			return nil, fmt.Errorf("starting mqtt observer: %w", err)
+		}
+		observers = append(observers, obs)
+		slog.Info("started mqtt observer", "name", derefStr(obsCfg.Name), "pubkey", publicKeyHex(id)[:16]+"...")
+	}
+	return observers, nil
+}
+
+func stopObservers(observers []*MqttObserver) {
+	for _, o := range observers {
+		o.Stop()
 	}
 }
 

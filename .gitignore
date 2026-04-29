@@ -41,3 +41,6 @@ go.work.sum
 
 # Docker build staging
 docker/bin/
+
+# Binary Builds
+meshcore-bot
