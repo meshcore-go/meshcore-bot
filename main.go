@@ -22,6 +22,8 @@ import (
 
 var version = "v1.0.1-dev"
 
+const LevelTrace = slog.Level(-8)
+
 var defaultConfigNames = []string{
 	"config.toml",
 	"config.yaml",
@@ -49,7 +51,7 @@ func (m *modemState) Close() {
 func main() {
 	configPath := flag.StringP("config", "c", "", "path to config file (toml, yaml, or json)")
 	showVersion := flag.BoolP("version", "V", false, "print version and exit")
-	verbose := flag.BoolP("verbose", "v", false, "enable verbose logging")
+	verbosity := flag.CountP("verbose", "v", "increase log verbosity (-v=debug, -vv=trace, -vvv=trace+)")
 	flag.Parse()
 
 	if *showVersion {
@@ -57,9 +59,19 @@ func main() {
 		return
 	}
 
-	if *verbose {
+	if *verbosity > 0 {
+		level := slog.LevelDebug
+		if *verbosity >= 2 {
+			level = LevelTrace
+		}
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-			Level: slog.LevelDebug,
+			Level: level,
+			ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+				if a.Key == slog.LevelKey && a.Value.Any().(slog.Level) == LevelTrace {
+					a.Value = slog.StringValue("TRACE")
+				}
+				return a
+			},
 		})))
 	}
 

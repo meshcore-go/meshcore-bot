@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"sync"
@@ -94,17 +95,30 @@ func (t *GroupTrigger) Stop() error {
 func (t *GroupTrigger) handlePacket(pkt *meshcore.Packet) {
 	msg, ch, err := t.node.DecryptGroupText(pkt)
 	if err != nil {
+		slog.Log(context.Background(), LevelTrace, "group decrypt failed",
+			"bot", t.botName, "error", err)
 		return
 	}
 
+	slog.Log(context.Background(), LevelTrace, "group message received",
+		"bot", t.botName, "channel", ch.Name, "sender", msg.Sender,
+		"text", msg.Text, "snr", pkt.SNR, "rssi", pkt.RSSI)
+
 	if t.channels != nil && !t.channels[ch.Name] {
+		slog.Log(context.Background(), LevelTrace, "channel not matched, skipping",
+			"bot", t.botName, "channel", ch.Name)
 		return
 	}
 
 	captures := t.matchesAny(msg.Text)
 	if captures == nil {
+		slog.Log(context.Background(), LevelTrace, "no pattern matched",
+			"bot", t.botName, "text", msg.Text)
 		return
 	}
+
+	slog.Log(context.Background(), LevelTrace, "trigger matched",
+		"bot", t.botName, "captures", captures)
 
 	t.mu.Lock()
 	cb := t.callback
@@ -140,6 +154,9 @@ func (t *GroupTrigger) matchesAny(text string) map[string]string {
 	}
 	for _, re := range t.patterns {
 		m := re.FindStringSubmatch(text)
+		slog.Log(context.Background(), LevelTrace, "regex check",
+			"bot", t.botName, "pattern", re.String(),
+			"text", text, "matched", m != nil)
 		if m == nil {
 			continue
 		}

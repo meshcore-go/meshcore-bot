@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -143,18 +144,28 @@ func (o *MqttObserver) Stop() {
 }
 
 func (o *MqttObserver) onData(data []byte, snr int8, rssi int8) {
+	slog.Log(context.Background(), LevelTrace, "raw radio data",
+		"len", len(data), "hex", strings.ToUpper(hex.EncodeToString(data)),
+		"snr", snr, "rssi", rssi)
+
 	pkt, err := meshcore.PacketFromBytes(data)
 	if err != nil {
+		slog.Log(context.Background(), LevelTrace, "packet parse failed", "error", err)
 		return
 	}
 	pkt.SNR = snr
 	pkt.RSSI = rssi
 
 	if o.dedup.hasSeen(pkt) {
+		slog.Log(context.Background(), LevelTrace, "dedup hit, skipping",
+			"type", pkt.PayloadType())
 		return
 	}
 
 	o.packetsReceived.Add(1)
+	slog.Log(context.Background(), LevelTrace, "new packet accepted",
+		"type", pkt.PayloadType(), "payload_len", len(pkt.Payload),
+		"total_received", o.packetsReceived.Load())
 
 	payload, err := formatPacket(pkt, data, o.originName, o.pubKeyHx)
 	if err != nil {
@@ -164,8 +175,12 @@ func (o *MqttObserver) onData(data []byte, snr int8, rssi int8) {
 
 	for _, bc := range o.brokers {
 		if !bc.isAllowed(pkt.PayloadType()) {
+			slog.Log(context.Background(), LevelTrace, "packet type filtered",
+				"broker", bc.cfg.Name, "type", pkt.PayloadType())
 			continue
 		}
+		slog.Log(context.Background(), LevelTrace, "publishing packet",
+			"broker", bc.cfg.Name, "topic", bc.packetTopic())
 		token := bc.client.Publish(bc.packetTopic(), 0, false, payload)
 		token.Wait()
 		if err := token.Error(); err != nil {
@@ -234,6 +249,9 @@ func (o *MqttObserver) publishStatus(ctx context.Context, bc *brokerClient, stat
 		slog.Error("mqtt status format error", "error", err)
 		return
 	}
+	slog.Log(ctx, LevelTrace, "publishing status",
+		"broker", bc.cfg.Name, "topic", bc.statusTopic(),
+		"json", string(payload))
 	token := bc.client.Publish(bc.statusTopic(), 1, bc.cfg.RetainStatus, payload)
 	token.Wait()
 }

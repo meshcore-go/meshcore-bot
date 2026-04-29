@@ -75,11 +75,15 @@ func (p *kissStatsProvider) Stats(ctx context.Context) DeviceStats {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return DeviceStats{
+	ds := DeviceStats{
 		NoiseFloor: p.noiseFloor,
 		BatteryMV:  p.batteryMV,
 		UptimeSecs: uint32(time.Since(p.startTime).Seconds()),
 	}
+	slog.Log(ctx, LevelTrace, "kiss stats",
+		"noise_floor", ds.NoiseFloor, "battery_mv", ds.BatteryMV,
+		"uptime_secs", ds.UptimeSecs)
+	return ds
 }
 
 func (p *kissStatsProvider) onNoiseFloor(_ byte, data []byte) {
@@ -140,5 +144,8 @@ func (p *companionStatsProvider) Stats(ctx context.Context) DeviceStats {
 		ds.UptimeSecs = coreStats.Core.UptimeSecs
 	}
 
+	slog.Log(ctx, LevelTrace, "companion stats",
+		"noise_floor", ds.NoiseFloor, "battery_mv", ds.BatteryMV,
+		"uptime_secs", ds.UptimeSecs)
 	return ds
 }

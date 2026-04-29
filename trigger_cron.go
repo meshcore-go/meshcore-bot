@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -39,6 +40,9 @@ func (t *CronTrigger) Start(ctx context.Context, callback TriggerCallback) error
 			return
 		default:
 		}
+
+		slog.Log(ctx, LevelTrace, "cron fired",
+			"bot", t.botName, "schedule", t.cfg.Schedule)
 
 		t.mu.Lock()
 		cb := t.callback

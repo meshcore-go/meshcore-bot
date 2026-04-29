@@ -133,6 +133,9 @@ func (b *Bot) makeCallback(ctx context.Context, entry triggerEntry) TriggerCallb
 			return
 		}
 
+		slog.Log(ctx, LevelTrace, "template rendered",
+			"bot", b.name, "trigger", evt.Type, "output", rendered)
+
 		switch evt.Type {
 		case "group":
 			chName, _ := evt.Data["Channel"].(string)
