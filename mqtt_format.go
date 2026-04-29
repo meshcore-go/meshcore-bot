@@ -28,7 +28,7 @@ type packetMessage struct {
 	Hash       string `json:"hash"`
 }
 
-func formatPacket(pkt *meshcore.Packet, rawBytes []byte, originName, originID string) ([]byte, error) {
+func formatPacket(pkt *meshcore.Packet, rawBytes []byte, originName, originID, direction string) ([]byte, error) {
 	now := time.Now()
 
 	route := "F"
@@ -43,7 +43,7 @@ func formatPacket(pkt *meshcore.Packet, rawBytes []byte, originName, originID st
 		OriginID:   originID,
 		Origin:     originName,
 		Type:       "PACKET",
-		Direction:  "rx",
+		Direction:  direction,
 		Time:       now.Format("15:04:05"),
 		Date:       fmt.Sprintf("%d/%d/%d", now.Day(), int(now.Month()), now.Year()),
 		Len:        fmt.Sprintf("%d", len(rawBytes)),

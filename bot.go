@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	meshcore "github.com/meshcore-go/meshcore-go"
@@ -12,8 +13,9 @@ import (
 )
 
 type triggerEntry struct {
-	trigger Trigger
-	config  TriggerConfig
+	trigger  Trigger
+	config   TriggerConfig
+	channels []*meshcore.ChannelEntry
 }
 
 type Bot struct {
@@ -54,16 +56,20 @@ func NewBot(cfg BotConfig, mux *node.RadioMux, sf SenderFactory) (*Bot, error) {
 
 	channelIdx := 0
 	for _, trigCfg := range cfg.Triggers {
-		entry, err := b.buildTrigger(trigCfg, channelIdx)
-		if err != nil {
-			return nil, fmt.Errorf("bot %q trigger %q: %w", botName, trigCfg.Type, err)
-		}
-
+		var channels []*meshcore.ChannelEntry
 		if trigCfg.Channels != nil {
 			for _, chName := range *trigCfg.Channels {
-				sender.RegisterChannel(channelIdx, chName)
+				ch := channelFromName(chName)
+				channels = append(channels, ch)
+				n.SetChannel(channelIdx, ch)
+				sender.RegisterChannel(channelIdx, ch)
 				channelIdx++
 			}
+		}
+
+		entry, err := b.buildTrigger(trigCfg, channels)
+		if err != nil {
+			return nil, fmt.Errorf("bot %q trigger %q: %w", botName, trigCfg.Type, err)
 		}
 
 		b.triggers = append(b.triggers, *entry)
@@ -72,13 +78,13 @@ func NewBot(cfg BotConfig, mux *node.RadioMux, sf SenderFactory) (*Bot, error) {
 	return b, nil
 }
 
-func (b *Bot) buildTrigger(cfg TriggerConfig, startIdx int) (*triggerEntry, error) {
+func (b *Bot) buildTrigger(cfg TriggerConfig, channels []*meshcore.ChannelEntry) (*triggerEntry, error) {
 	var t Trigger
 	var err error
 
 	switch cfg.Type {
 	case "group":
-		t, err = NewGroupTrigger(b.name, cfg, b.node, startIdx)
+		t, err = NewGroupTrigger(b.name, cfg, b.node, channels)
 	case "cron":
 		t, err = NewCronTrigger(b.name, cfg)
 	default:
@@ -89,8 +95,9 @@ func (b *Bot) buildTrigger(cfg TriggerConfig, startIdx int) (*triggerEntry, erro
 	}
 
 	return &triggerEntry{
-		trigger: t,
-		config:  cfg,
+		trigger:  t,
+		config:   cfg,
+		channels: channels,
 	}, nil
 }
 
@@ -138,22 +145,29 @@ func (b *Bot) makeCallback(ctx context.Context, entry triggerEntry) TriggerCallb
 
 		switch evt.Type {
 		case "group":
-			chName, _ := evt.Data["Channel"].(string)
-			slog.Debug("sending group txt", "bot", b.name, "channel", chName)
-			if err := b.sender.SendGroupText(ctx, chName, b.name, rendered); err != nil {
+			ch, _ := evt.Data["ChannelEntry"].(*meshcore.ChannelEntry)
+			slog.Debug("sending group txt", "bot", b.name, "channel", ch.Name)
+			if err := b.sender.SendGroupText(ctx, ch, b.name, rendered); err != nil {
 				slog.Error("send error", "bot", b.name, "error", err)
 			}
 		case "cron":
-			if entry.config.Channels != nil {
-				for _, ch := range *entry.config.Channels {
-					slog.Debug("sending group txt", "bot", b.name, "channel", ch)
-					if err := b.sender.SendGroupText(ctx, ch, b.name, rendered); err != nil {
-						slog.Error("send error", "bot", b.name, "error", err)
-					}
+			for _, ch := range entry.channels {
+				slog.Debug("sending group txt", "bot", b.name, "channel", ch.Name)
+				if err := b.sender.SendGroupText(ctx, ch, b.name, rendered); err != nil {
+					slog.Error("send error", "bot", b.name, "error", err)
 				}
 			}
 		}
 	}
+}
+
+func channelFromName(name string) *meshcore.ChannelEntry {
+	if strings.EqualFold(name, "Public") {
+		ch, _ := meshcore.NewChannelFromBase64("Public", "izOH6cXN6mrJ5e26oRXNcg==")
+		return ch
+	}
+	nCh := meshcore.NormalizeHashtag(name)
+	return meshcore.NewChannelFromHashtag(nCh)
 }
 
 func identityFromName(name string) meshcore.LocalIdentity {

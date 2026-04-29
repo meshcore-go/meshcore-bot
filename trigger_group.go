@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
-	"strings"
 	"sync"
 
 	meshcore "github.com/meshcore-go/meshcore-go"
@@ -24,7 +23,7 @@ type GroupTrigger struct {
 	cancel   context.CancelFunc
 }
 
-func NewGroupTrigger(botName string, cfg TriggerConfig, n *node.Node, startChannelIdx int) (*GroupTrigger, error) {
+func NewGroupTrigger(botName string, cfg TriggerConfig, n *node.Node, channels []*meshcore.ChannelEntry) (*GroupTrigger, error) {
 	var patterns []*regexp.Regexp
 	if cfg.Match != nil {
 		patterns = make([]*regexp.Regexp, 0, len(*cfg.Match))
@@ -37,21 +36,11 @@ func NewGroupTrigger(botName string, cfg TriggerConfig, n *node.Node, startChann
 		}
 	}
 
-	var channels map[string]bool
-	if cfg.Channels != nil && len(*cfg.Channels) > 0 {
-		channels = make(map[string]bool, len(*cfg.Channels))
-		for i, ch := range *cfg.Channels {
-			idx := startChannelIdx + i
-			if strings.EqualFold(ch, "Public") {
-				channels["Public"] = true
-				pub, _ := meshcore.NewChannelFromBase64("Public", "izOH6cXN6mrJ5e26oRXNcg==")
-				n.SetChannel(idx, pub)
-			} else {
-				nCh := meshcore.NormalizeHashtag(ch)
-				channels[nCh] = true
-				chEntry := meshcore.NewChannelFromHashtag(nCh)
-				n.SetChannel(idx, chEntry)
-			}
+	var channelFilter map[string]bool
+	if len(channels) > 0 {
+		channelFilter = make(map[string]bool, len(channels))
+		for _, ch := range channels {
+			channelFilter[ch.Name] = true
 		}
 	}
 
@@ -60,7 +49,7 @@ func NewGroupTrigger(botName string, cfg TriggerConfig, n *node.Node, startChann
 		botName:  botName,
 		node:     n,
 		patterns: patterns,
-		channels: channels,
+		channels: channelFilter,
 	}, nil
 }
 
@@ -133,6 +122,7 @@ func (t *GroupTrigger) handlePacket(pkt *meshcore.Packet) {
 		Data: map[string]any{
 			"Sender":       msg.Sender,
 			"Channel":      ch.Name,
+			"ChannelEntry": ch,
 			"Message":      msg.Text,
 			"Match":        captures,
 			"Timestamp":    msg.Timestamp,

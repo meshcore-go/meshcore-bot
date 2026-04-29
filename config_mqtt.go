@@ -5,6 +5,7 @@ type MqttConfig struct {
 	IataCode       *string        `json:"iataCode" yaml:"iataCode" toml:"iataCode"`
 	KeyFile        *string        `json:"keyFile" yaml:"keyFile" toml:"keyFile"`
 	StatusInterval *int           `json:"statusInterval" yaml:"statusInterval" toml:"statusInterval"`
+	ObserveTX      *bool          `json:"observeTX" yaml:"observeTX" toml:"observeTX"`
 	Owner          *string        `json:"owner" yaml:"owner" toml:"owner"`
 	Email          *string        `json:"email" yaml:"email" toml:"email"`
 	Brokers        []BrokerConfig `json:"brokers" yaml:"brokers" toml:"broker"`

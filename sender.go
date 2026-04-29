@@ -14,8 +14,8 @@ import (
 )
 
 type Sender interface {
-	SendGroupText(ctx context.Context, channelName string, senderName string, text string) error
-	RegisterChannel(idx int, name string)
+	SendGroupText(ctx context.Context, channel *meshcore.ChannelEntry, senderName string, text string) error
+	RegisterChannel(idx int, channel *meshcore.ChannelEntry)
 }
 
 type SenderFactory func(n *node.Node) Sender
@@ -28,18 +28,16 @@ func NewNodeSender(n *node.Node) *NodeSender {
 	return &NodeSender{node: n}
 }
 
-func (s *NodeSender) RegisterChannel(_ int, _ string) {}
+func (s *NodeSender) RegisterChannel(_ int, _ *meshcore.ChannelEntry) {}
 
-func (s *NodeSender) SendGroupText(_ context.Context, channelName string, senderName string, text string) error {
-	ch := meshcore.NewChannelFromHashtag(channelName)
-
+func (s *NodeSender) SendGroupText(_ context.Context, channel *meshcore.ChannelEntry, senderName string, text string) error {
 	reply := &meshcore.GroupTextPayload{
 		Timestamp: uint32(time.Now().Unix()),
 		Sender:    senderName,
 		Text:      text,
 	}
 
-	gt, err := reply.Encrypt(ch.Hash, ch.PSK[:])
+	gt, err := reply.Encrypt(channel.Hash, channel.PSK[:])
 	if err != nil {
 		return fmt.Errorf("encrypt: %w", err)
 	}
@@ -65,7 +63,7 @@ type CompanionSender struct {
 	client *companionClient.Client
 
 	mu       sync.RWMutex
-	channels map[string]byte
+	channels map[string]byte // normalized name -> device slot index
 }
 
 func NewCompanionSender(ctx context.Context, c *companionClient.Client) (*CompanionSender, error) {
@@ -83,7 +81,7 @@ func NewCompanionSender(ctx context.Context, c *companionClient.Client) (*Compan
 }
 
 func (s *CompanionSender) loadDeviceChannels() error {
-	for i := byte(0); i < maxDeviceChannels; i++ {
+	for i := range byte(maxDeviceChannels) {
 		info, err := s.client.GetChannel(s.ctx, i)
 		if err != nil {
 			break
@@ -98,8 +96,8 @@ func (s *CompanionSender) loadDeviceChannels() error {
 	return nil
 }
 
-func (s *CompanionSender) RegisterChannel(_ int, name string) {
-	name = normalizeChannelName(name)
+func (s *CompanionSender) RegisterChannel(_ int, channel *meshcore.ChannelEntry) {
+	name := normalizeChannelName(channel.Name)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -114,8 +112,7 @@ func (s *CompanionSender) RegisterChannel(_ int, name string) {
 		return
 	}
 
-	ch := meshcore.NewChannelFromHashtag(name)
-	if err := s.client.SetChannel(s.ctx, idx, name, ch.PSK); err != nil {
+	if err := s.client.SetChannel(s.ctx, idx, name, channel.PSK); err != nil {
 		slog.Error("failed to set channel on device", "channel", name, "idx", idx, "error", err)
 		return
 	}
@@ -129,7 +126,7 @@ func (s *CompanionSender) findEmptySlot() (byte, error) {
 	for _, idx := range s.channels {
 		used[idx] = true
 	}
-	for i := byte(0); i < maxDeviceChannels; i++ {
+	for i := range byte(maxDeviceChannels) {
 		if !used[i] {
 			return i, nil
 		}
@@ -137,14 +134,14 @@ func (s *CompanionSender) findEmptySlot() (byte, error) {
 	return 0, fmt.Errorf("all %d channel slots occupied", maxDeviceChannels)
 }
 
-func (s *CompanionSender) SendGroupText(ctx context.Context, channelName string, _ string, text string) error {
-	name := normalizeChannelName(channelName)
+func (s *CompanionSender) SendGroupText(ctx context.Context, channel *meshcore.ChannelEntry, _ string, text string) error {
+	name := normalizeChannelName(channel.Name)
 
 	s.mu.RLock()
 	idx, ok := s.channels[name]
 	s.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("channel %q not registered on companion device", channelName)
+		return fmt.Errorf("channel %q not registered on companion device", channel.Name)
 	}
 
 	_, err := s.client.SendChannelTextMessage(ctx, idx, text, 0)

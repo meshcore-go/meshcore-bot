@@ -40,6 +40,7 @@ func (b *brokerClient) isAllowed(payloadType byte) bool {
 
 type MqttObserver struct {
 	radio node.MuxRadio
+	modem node.Modem
 	dedup dedupCache
 	id    meshcore.LocalIdentity
 	stats StatsProvider
@@ -49,12 +50,13 @@ type MqttObserver struct {
 	pubKeyHx        string
 	brokers         []*brokerClient
 	packetsReceived atomic.Uint64
+	packetsSent     atomic.Uint64
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
 }
 
-func NewMqttObserver(cfg MqttConfig, mux *node.RadioMux, id meshcore.LocalIdentity, stats StatsProvider) (*MqttObserver, error) {
+func NewMqttObserver(cfg MqttConfig, mux *node.RadioMux, modem node.Modem, id meshcore.LocalIdentity, stats StatsProvider) (*MqttObserver, error) {
 	name := "mqtt-observer"
 	if cfg.Name != nil && *cfg.Name != "" {
 		name = *cfg.Name
@@ -65,6 +67,7 @@ func NewMqttObserver(cfg MqttConfig, mux *node.RadioMux, id meshcore.LocalIdenti
 
 	obs := &MqttObserver{
 		radio:      radio,
+		modem:      modem,
 		id:         id,
 		cfg:        cfg,
 		stats:      stats,
@@ -120,6 +123,11 @@ func (o *MqttObserver) Start(ctx context.Context) error {
 	o.radio.SetPacketFilter(func(_ *meshcore.Packet) bool { return true })
 	o.radio.SetRawDataHandler(o.onData)
 
+	if o.cfg.ObserveTX == nil || *o.cfg.ObserveTX {
+		o.modem.AddOutboundHandler(o.onOutbound)
+		slog.Info("mqtt observer TX hook enabled")
+	}
+
 	go o.heartbeatLoop(ctx)
 	go o.tokenRefreshLoop(ctx)
 
@@ -163,11 +171,29 @@ func (o *MqttObserver) onData(data []byte, snr int8, rssi int8) {
 	}
 
 	o.packetsReceived.Add(1)
-	slog.Log(context.Background(), LevelTrace, "new packet accepted",
-		"type", pkt.PayloadType(), "payload_len", len(pkt.Payload),
-		"total_received", o.packetsReceived.Load())
+	o.publishPacket(pkt, data, "rx")
+}
 
-	payload, err := formatPacket(pkt, data, o.originName, o.pubKeyHx)
+func (o *MqttObserver) onOutbound(data []byte) {
+	slog.Log(context.Background(), LevelTrace, "outbound radio data",
+		"len", len(data), "hex", strings.ToUpper(hex.EncodeToString(data)))
+
+	pkt, err := meshcore.PacketFromBytes(data)
+	if err != nil {
+		slog.Log(context.Background(), LevelTrace, "outbound packet parse failed", "error", err)
+		return
+	}
+
+	o.packetsSent.Add(1)
+	o.publishPacket(pkt, data, "tx")
+}
+
+func (o *MqttObserver) publishPacket(pkt *meshcore.Packet, rawBytes []byte, direction string) {
+	slog.Log(context.Background(), LevelTrace, "new packet accepted",
+		"direction", direction, "type", pkt.PayloadType(),
+		"payload_len", len(pkt.Payload))
+
+	payload, err := formatPacket(pkt, rawBytes, o.originName, o.pubKeyHx, direction)
 	if err != nil {
 		slog.Error("mqtt format error", "error", err)
 		return
@@ -180,7 +206,7 @@ func (o *MqttObserver) onData(data []byte, snr int8, rssi int8) {
 			continue
 		}
 		slog.Log(context.Background(), LevelTrace, "publishing packet",
-			"broker", bc.cfg.Name, "topic", bc.packetTopic())
+			"broker", bc.cfg.Name, "topic", bc.packetTopic(), "direction", direction)
 		token := bc.client.Publish(bc.packetTopic(), 0, false, payload)
 		token.Wait()
 		if err := token.Error(); err != nil {
