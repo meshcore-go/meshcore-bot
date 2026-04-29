@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
-	"strings"
 	"sync"
 
 	meshcore "github.com/meshcore-go/meshcore-go"
@@ -23,7 +23,7 @@ type GroupTrigger struct {
 	cancel   context.CancelFunc
 }
 
-func NewGroupTrigger(botName string, cfg TriggerConfig, n *node.Node, startChannelIdx int) (*GroupTrigger, error) {
+func NewGroupTrigger(botName string, cfg TriggerConfig, n *node.Node, channels []*meshcore.ChannelEntry) (*GroupTrigger, error) {
 	var patterns []*regexp.Regexp
 	if cfg.Match != nil {
 		patterns = make([]*regexp.Regexp, 0, len(*cfg.Match))
@@ -36,21 +36,11 @@ func NewGroupTrigger(botName string, cfg TriggerConfig, n *node.Node, startChann
 		}
 	}
 
-	var channels map[string]bool
-	if cfg.Channels != nil && len(*cfg.Channels) > 0 {
-		channels = make(map[string]bool, len(*cfg.Channels))
-		for i, ch := range *cfg.Channels {
-			idx := startChannelIdx + i
-			if strings.EqualFold(ch, "Public") {
-				channels["Public"] = true
-				pub, _ := meshcore.NewChannelFromBase64("Public", "izOH6cXN6mrJ5e26oRXNcg==")
-				n.SetChannel(idx, pub)
-			} else {
-				nCh := meshcore.NormalizeHashtag(ch)
-				channels[nCh] = true
-				chEntry := meshcore.NewChannelFromHashtag(nCh)
-				n.SetChannel(idx, chEntry)
-			}
+	var channelFilter map[string]bool
+	if len(channels) > 0 {
+		channelFilter = make(map[string]bool, len(channels))
+		for _, ch := range channels {
+			channelFilter[ch.Name] = true
 		}
 	}
 
@@ -59,7 +49,7 @@ func NewGroupTrigger(botName string, cfg TriggerConfig, n *node.Node, startChann
 		botName:  botName,
 		node:     n,
 		patterns: patterns,
-		channels: channels,
+		channels: channelFilter,
 	}, nil
 }
 
@@ -94,17 +84,30 @@ func (t *GroupTrigger) Stop() error {
 func (t *GroupTrigger) handlePacket(pkt *meshcore.Packet) {
 	msg, ch, err := t.node.DecryptGroupText(pkt)
 	if err != nil {
+		slog.Log(context.Background(), LevelTrace, "group decrypt failed",
+			"bot", t.botName, "error", err)
 		return
 	}
 
+	slog.Log(context.Background(), LevelTrace, "group message received",
+		"bot", t.botName, "channel", ch.Name, "sender", msg.Sender,
+		"text", msg.Text, "snr", pkt.SNR, "rssi", pkt.RSSI)
+
 	if t.channels != nil && !t.channels[ch.Name] {
+		slog.Log(context.Background(), LevelTrace, "channel not matched, skipping",
+			"bot", t.botName, "channel", ch.Name)
 		return
 	}
 
 	captures := t.matchesAny(msg.Text)
 	if captures == nil {
+		slog.Log(context.Background(), LevelTrace, "no pattern matched",
+			"bot", t.botName, "text", msg.Text)
 		return
 	}
+
+	slog.Log(context.Background(), LevelTrace, "trigger matched",
+		"bot", t.botName, "captures", captures)
 
 	t.mu.Lock()
 	cb := t.callback
@@ -119,6 +122,7 @@ func (t *GroupTrigger) handlePacket(pkt *meshcore.Packet) {
 		Data: map[string]any{
 			"Sender":       msg.Sender,
 			"Channel":      ch.Name,
+			"ChannelEntry": ch,
 			"Message":      msg.Text,
 			"Match":        captures,
 			"Timestamp":    msg.Timestamp,
@@ -140,6 +144,9 @@ func (t *GroupTrigger) matchesAny(text string) map[string]string {
 	}
 	for _, re := range t.patterns {
 		m := re.FindStringSubmatch(text)
+		slog.Log(context.Background(), LevelTrace, "regex check",
+			"bot", t.botName, "pattern", re.String(),
+			"text", text, "matched", m != nil)
 		if m == nil {
 			continue
 		}
