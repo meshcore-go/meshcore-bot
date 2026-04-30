@@ -14,7 +14,7 @@ import (
 )
 
 type Sender interface {
-	SendGroupText(ctx context.Context, channel *meshcore.ChannelEntry, senderName string, text string) error
+	SendGroupText(ctx context.Context, channel *meshcore.ChannelEntry, senderName string, text string, pathHashSize uint8) error
 	RegisterChannel(idx int, channel *meshcore.ChannelEntry)
 }
 
@@ -30,7 +30,7 @@ func NewNodeSender(n *node.Node) *NodeSender {
 
 func (s *NodeSender) RegisterChannel(_ int, _ *meshcore.ChannelEntry) {}
 
-func (s *NodeSender) SendGroupText(_ context.Context, channel *meshcore.ChannelEntry, senderName string, text string) error {
+func (s *NodeSender) SendGroupText(_ context.Context, channel *meshcore.ChannelEntry, senderName string, text string, pathHashSize uint8) error {
 	reply := &meshcore.GroupTextPayload{
 		Timestamp: uint32(time.Now().Unix()),
 		Sender:    senderName,
@@ -47,9 +47,16 @@ func (s *NodeSender) SendGroupText(_ context.Context, channel *meshcore.ChannelE
 		return fmt.Errorf("serialize: %w", err)
 	}
 
+	if pathHashSize < 1 {
+		pathHashSize = 1
+	}
+	if pathHashSize > 4 {
+		pathHashSize = 4
+	}
+
 	pkt := &meshcore.Packet{
 		Header:     meshcore.MakeHeader(meshcore.RouteTypeFlood, meshcore.PayloadTypeGrpTxt, 0),
-		PathLength: 0x00,
+		PathLength: (pathHashSize - 1) << 6,
 		Payload:    payload,
 	}
 
@@ -134,7 +141,7 @@ func (s *CompanionSender) findEmptySlot() (byte, error) {
 	return 0, fmt.Errorf("all %d channel slots occupied", maxDeviceChannels)
 }
 
-func (s *CompanionSender) SendGroupText(ctx context.Context, channel *meshcore.ChannelEntry, _ string, text string) error {
+func (s *CompanionSender) SendGroupText(ctx context.Context, channel *meshcore.ChannelEntry, _ string, text string, _ uint8) error {
 	name := normalizeChannelName(channel.Name)
 
 	s.mu.RLock()

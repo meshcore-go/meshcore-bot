@@ -143,22 +143,37 @@ func (b *Bot) makeCallback(ctx context.Context, entry triggerEntry) TriggerCallb
 		slog.Log(ctx, LevelTrace, "template rendered",
 			"bot", b.name, "trigger", evt.Type, "output", rendered)
 
+		hashSize := resolvePathHashSize(entry.config.PathHashSize, evt)
+
 		switch evt.Type {
 		case "group":
 			ch, _ := evt.Data["ChannelEntry"].(*meshcore.ChannelEntry)
-			slog.Debug("sending group txt", "bot", b.name, "channel", ch.Name)
-			if err := b.sender.SendGroupText(ctx, ch, b.name, rendered); err != nil {
+			slog.Debug("sending group txt", "bot", b.name, "channel", ch.Name, "pathHashSize", hashSize)
+			if err := b.sender.SendGroupText(ctx, ch, b.name, rendered, hashSize); err != nil {
 				slog.Error("send error", "bot", b.name, "error", err)
 			}
 		case "cron":
 			for _, ch := range entry.channels {
-				slog.Debug("sending group txt", "bot", b.name, "channel", ch.Name)
-				if err := b.sender.SendGroupText(ctx, ch, b.name, rendered); err != nil {
+				slog.Debug("sending group txt", "bot", b.name, "channel", ch.Name, "pathHashSize", hashSize)
+				if err := b.sender.SendGroupText(ctx, ch, b.name, rendered, hashSize); err != nil {
 					slog.Error("send error", "bot", b.name, "error", err)
 				}
 			}
 		}
 	}
+}
+
+func resolvePathHashSize(configured *uint8, evt TriggerEvent) uint8 {
+	if configured == nil {
+		return 1
+	}
+	if *configured >= 1 && *configured <= 4 {
+		return *configured
+	}
+	if incoming, ok := evt.Data["PathHashSize"].(uint8); ok && incoming >= 1 && incoming <= 4 {
+		return incoming
+	}
+	return 1
 }
 
 func channelFromName(name string) *meshcore.ChannelEntry {

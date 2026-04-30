@@ -19,6 +19,9 @@ type TriggerConfig struct {
 	Channels *[]string `json:"channels" yaml:"channels" toml:"channels"` // What channels to listen in for Group Messages
 	Contacts *[]string `json:"contacts" yaml:"contacts" toml:"contact"`  // What Contacts to listen in for DMs
 
+	// Path Hash Size: 1-4 = fixed size, 0 = mirror incoming packet's hash size, nil = default (1)
+	PathHashSize *uint8 `json:"pathHashSize,omitempty" yaml:"pathHashSize,omitempty" toml:"pathHashSize,omitempty"`
+
 	// Cron Trigger
 	Schedule string `json:"schedule,omitempty" yaml:"schedule,omitempty" toml:"schedule,omitempty"`
 }

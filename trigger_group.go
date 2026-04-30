@@ -95,14 +95,14 @@ func (t *GroupTrigger) handlePacket(pkt *meshcore.Packet) {
 
 	if t.channels != nil && !t.channels[ch.Name] {
 		slog.Log(context.Background(), LevelTrace, "channel not matched, skipping",
-			"bot", t.botName, "channel", ch.Name)
+			"bot", t.botName, "received", ch.Name, "listening", t.channelNames())
 		return
 	}
 
 	captures := t.matchesAny(msg.Text)
 	if captures == nil {
 		slog.Log(context.Background(), LevelTrace, "no pattern matched",
-			"bot", t.botName, "text", msg.Text)
+			"bot", t.botName, "channel", ch.Name, "text", msg.Text, "patterns", t.patternStrings())
 		return
 	}
 
@@ -160,6 +160,22 @@ func (t *GroupTrigger) matchesAny(text string) map[string]string {
 		return captures
 	}
 	return nil
+}
+
+func (t *GroupTrigger) channelNames() []string {
+	names := make([]string, 0, len(t.channels))
+	for name := range t.channels {
+		names = append(names, name)
+	}
+	return names
+}
+
+func (t *GroupTrigger) patternStrings() []string {
+	strs := make([]string, len(t.patterns))
+	for i, re := range t.patterns {
+		strs[i] = re.String()
+	}
+	return strs
 }
 
 var _ Trigger = (*GroupTrigger)(nil)
