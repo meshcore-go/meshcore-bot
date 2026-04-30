@@ -63,7 +63,7 @@ type statsBlock struct {
 	UptimeSecs      uint32 `json:"uptime_secs"`
 	PacketsReceived uint64 `json:"packets_received"`
 	PacketsSent     uint64 `json:"packets_sent"`
-	Errors          int    `json:"errors"`
+	RecvErrors      uint64 `json:"recv_errors"`
 	QueueLen        int    `json:"queue_len"`
 }
 
@@ -81,7 +81,7 @@ type statusMessage struct {
 	Stats           statsBlock `json:"stats"`
 }
 
-func formatStatus(status, originName, originID string, radio RadioInfo, ds DeviceStats, packetsReceived uint64) ([]byte, error) {
+func formatStatus(status, originName, originID string, radio RadioInfo, ds DeviceStats, packetsReceived, recvErrors uint64) ([]byte, error) {
 	var radioStr string
 	if radio.FreqHz > 0 {
 		radioStr = fmt.Sprintf("%.3f,%.1f,%d,%d",
@@ -111,6 +111,7 @@ func formatStatus(status, originName, originID string, radio RadioInfo, ds Devic
 		Stats: statsBlock{
 			UptimeSecs:      ds.UptimeSecs,
 			PacketsReceived: packetsReceived,
+			RecvErrors:      recvErrors,
 		},
 	}
 	return json.Marshal(msg)

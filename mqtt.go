@@ -40,21 +40,23 @@ func (b *brokerClient) isAllowed(payloadType byte) bool {
 
 type MqttObserver struct {
 	radio node.MuxRadio
-	dedup dedupCache
+	dedup meshcore.DedupCache
 	id    meshcore.LocalIdentity
 	stats StatsProvider
+	log   *slog.Logger
 
 	cfg             MqttConfig
 	originName      string
 	pubKeyHx        string
 	brokers         []*brokerClient
 	packetsReceived atomic.Uint64
+	recvErrors      *atomic.Uint64
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
 }
 
-func NewMqttObserver(cfg MqttConfig, mux *node.RadioMux, id meshcore.LocalIdentity, stats StatsProvider) (*MqttObserver, error) {
+func NewMqttObserver(cfg MqttConfig, mux *node.RadioMux, id meshcore.LocalIdentity, stats StatsProvider, recvErrors *atomic.Uint64) (*MqttObserver, error) {
 	name := "mqtt-observer"
 	if cfg.Name != nil && *cfg.Name != "" {
 		name = *cfg.Name
@@ -68,8 +70,10 @@ func NewMqttObserver(cfg MqttConfig, mux *node.RadioMux, id meshcore.LocalIdenti
 		id:         id,
 		cfg:        cfg,
 		stats:      stats,
+		recvErrors: recvErrors,
 		originName: name,
 		pubKeyHx:   pkHex,
+		log:        slog.Default().With("component", "mqtt", "observer", name),
 	}
 
 	return obs, nil
@@ -93,7 +97,7 @@ func (o *MqttObserver) Start(ctx context.Context) error {
 
 		client, err := o.connectBroker(bcfg, iata)
 		if err != nil {
-			slog.Error("mqtt broker connect failed", "broker", bcfg.Name, "error", err)
+			o.log.Error("broker connect failed", "broker", bcfg.Name, "error", err)
 			continue
 		}
 
@@ -114,7 +118,7 @@ func (o *MqttObserver) Start(ctx context.Context) error {
 
 		o.publishStatus(ctx, bc, "online")
 		o.brokers = append(o.brokers, bc)
-		slog.Info("mqtt connected", "broker", bcfg.Name)
+		o.log.Info("connected", "broker", bcfg.Name)
 	}
 
 	o.radio.SetPacketFilter(func(_ *meshcore.Packet) bool { return true })
@@ -144,20 +148,20 @@ func (o *MqttObserver) Stop() {
 }
 
 func (o *MqttObserver) onData(data []byte, snr int8, rssi int8) {
-	slog.Log(context.Background(), LevelTrace, "raw radio data",
+	o.log.Log(context.Background(), LevelTrace, "raw radio data",
 		"len", len(data), "hex", strings.ToUpper(hex.EncodeToString(data)),
 		"snr", snr, "rssi", rssi)
 
 	pkt, err := meshcore.PacketFromBytes(data)
 	if err != nil {
-		slog.Log(context.Background(), LevelTrace, "packet parse failed", "error", err)
+		o.log.Log(context.Background(), LevelTrace, "packet parse failed", "error", err)
 		return
 	}
 	pkt.SNR = snr
 	pkt.RSSI = rssi
 
-	if o.dedup.hasSeen(pkt) {
-		slog.Log(context.Background(), LevelTrace, "dedup hit, skipping",
+	if o.dedup.HasSeen(pkt) {
+		o.log.Log(context.Background(), LevelTrace, "dedup hit, skipping",
 			"type", pkt.PayloadType())
 		return
 	}
@@ -167,28 +171,28 @@ func (o *MqttObserver) onData(data []byte, snr int8, rssi int8) {
 }
 
 func (o *MqttObserver) publishPacket(pkt *meshcore.Packet, rawBytes []byte, direction string) {
-	slog.Log(context.Background(), LevelTrace, "new packet accepted",
+	o.log.Log(context.Background(), LevelTrace, "new packet accepted",
 		"direction", direction, "type", pkt.PayloadType(),
 		"payload_len", len(pkt.Payload))
 
 	payload, err := formatPacket(pkt, rawBytes, o.originName, o.pubKeyHx, direction)
 	if err != nil {
-		slog.Error("mqtt format error", "error", err)
+		o.log.Error("format error", "error", err)
 		return
 	}
 
 	for _, bc := range o.brokers {
 		if !bc.isAllowed(pkt.PayloadType()) {
-			slog.Log(context.Background(), LevelTrace, "packet type filtered",
+			o.log.Log(context.Background(), LevelTrace, "packet type filtered",
 				"broker", bc.cfg.Name, "type", pkt.PayloadType())
 			continue
 		}
-		slog.Log(context.Background(), LevelTrace, "publishing packet",
+		o.log.Log(context.Background(), LevelTrace, "publishing packet",
 			"broker", bc.cfg.Name, "topic", bc.packetTopic(), "direction", direction)
 		token := bc.client.Publish(bc.packetTopic(), 0, false, payload)
 		token.Wait()
 		if err := token.Error(); err != nil {
-			slog.Error("mqtt publish error", "broker", bc.cfg.Name, "error", err)
+			o.log.Error("publish error", "broker", bc.cfg.Name, "error", err)
 		}
 	}
 }
@@ -224,17 +228,17 @@ func (o *MqttObserver) tokenRefreshLoop(ctx context.Context) {
 				if !strings.EqualFold(bc.cfg.AuthType, "token") {
 					continue
 				}
-				slog.Debug("refreshing mqtt token", "broker", bc.cfg.Name)
+				o.log.Debug("refreshing token", "broker", bc.cfg.Name)
 				bc.client.Disconnect(250)
 
 				newClient, err := o.connectBroker(bc.cfg, bc.iata)
 				if err != nil {
-					slog.Error("mqtt token refresh reconnect failed", "broker", bc.cfg.Name, "error", err)
+					o.log.Error("token refresh reconnect failed", "broker", bc.cfg.Name, "error", err)
 					continue
 				}
 				bc.client = newClient
 				o.publishStatus(ctx, bc, "online")
-				slog.Info("mqtt token refreshed", "broker", bc.cfg.Name)
+				o.log.Info("token refreshed", "broker", bc.cfg.Name)
 			}
 		}
 	}
@@ -248,12 +252,12 @@ func (o *MqttObserver) publishStatus(ctx context.Context, bc *brokerClient, stat
 		ds = o.stats.Stats(ctx)
 	}
 
-	payload, err := formatStatus(status, o.originName, o.pubKeyHx, radio, ds, o.packetsReceived.Load())
+	payload, err := formatStatus(status, o.originName, o.pubKeyHx, radio, ds, o.packetsReceived.Load(), o.recvErrors.Load())
 	if err != nil {
-		slog.Error("mqtt status format error", "error", err)
+		o.log.Error("status format error", "error", err)
 		return
 	}
-	slog.Log(ctx, LevelTrace, "publishing status",
+	o.log.Log(ctx, LevelTrace, "publishing status",
 		"broker", bc.cfg.Name, "topic", bc.statusTopic(),
 		"json", string(payload))
 	token := bc.client.Publish(bc.statusTopic(), 1, bc.cfg.RetainStatus, payload)
@@ -319,7 +323,7 @@ func (o *MqttObserver) connectBroker(bcfg BrokerConfig, iata string) (mqtt.Clien
 	statusTopic := fmt.Sprintf("%s/%s/%s/status", prefix, iata, o.pubKeyHx)
 
 	// LWT uses minimal status (no live stats — we're about to disconnect).
-	offlinePayload, _ := formatStatus("offline", o.originName, o.pubKeyHx, RadioInfo{}, DeviceStats{}, 0)
+	offlinePayload, _ := formatStatus("offline", o.originName, o.pubKeyHx, RadioInfo{}, DeviceStats{}, 0, 0)
 	opts.SetWill(statusTopic, string(offlinePayload), 1, bcfg.RetainStatus)
 
 	client := mqtt.NewClient(opts)
