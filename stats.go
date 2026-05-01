@@ -36,6 +36,7 @@ type kissStatsProvider struct {
 	modem     *hardware.KissModem
 	radio     RadioInfo
 	startTime time.Time
+	log       *slog.Logger
 
 	mu         sync.Mutex
 	noiseFloor int16
@@ -47,6 +48,7 @@ func NewKissStatsProvider(modem *hardware.KissModem, radio RadioInfo) *kissStats
 		modem:     modem,
 		radio:     radio,
 		startTime: time.Now(),
+		log:       slog.Default().With("component", "stats", "type", "kiss"),
 	}
 
 	modem.OnHwResponse(hardware.HwResp(hardware.HW_CMD_GET_NOISE_FLOOR), p.onNoiseFloor)
@@ -61,10 +63,10 @@ func (p *kissStatsProvider) RadioConfig() RadioInfo {
 
 func (p *kissStatsProvider) Stats(ctx context.Context) DeviceStats {
 	if err := p.modem.GetNoiseFloor(); err != nil {
-		slog.Error("kiss get noise floor", "error", err)
+		p.log.Error("get noise floor", "error", err)
 	}
 	if err := p.modem.GetBattery(); err != nil {
-		slog.Error("kiss get battery", "error", err)
+		p.log.Error("get battery", "error", err)
 	}
 
 	// Give the modem a moment to respond.
@@ -80,7 +82,7 @@ func (p *kissStatsProvider) Stats(ctx context.Context) DeviceStats {
 		BatteryMV:  p.batteryMV,
 		UptimeSecs: uint32(time.Since(p.startTime).Seconds()),
 	}
-	slog.Log(ctx, LevelTrace, "kiss stats",
+	p.log.Log(ctx, LevelTrace, "stats polled",
 		"noise_floor", ds.NoiseFloor, "battery_mv", ds.BatteryMV,
 		"uptime_secs", ds.UptimeSecs)
 	return ds
@@ -107,6 +109,7 @@ func (p *kissStatsProvider) onBattery(_ byte, data []byte) {
 type companionStatsProvider struct {
 	client *companionClient.Client
 	radio  RadioInfo
+	log    *slog.Logger
 }
 
 func NewCompanionStatsProvider(client *companionClient.Client, selfInfo companion.SelfInfoResponse) *companionStatsProvider {
@@ -119,6 +122,7 @@ func NewCompanionStatsProvider(client *companionClient.Client, selfInfo companio
 			CR:      selfInfo.RadioCodingRate,
 			TxPower: selfInfo.TxPower,
 		},
+		log: slog.Default().With("component", "stats", "type", "companion"),
 	}
 }
 
@@ -131,20 +135,20 @@ func (p *companionStatsProvider) Stats(ctx context.Context) DeviceStats {
 
 	radioStats, err := p.client.GetStats(ctx, companion.StatsTypeRadio)
 	if err != nil {
-		slog.Error("companion get radio stats", "error", err)
+		p.log.Error("get radio stats", "error", err)
 	} else if radioStats.Radio != nil {
 		ds.NoiseFloor = radioStats.Radio.NoiseFloor
 	}
 
 	coreStats, err := p.client.GetStats(ctx, companion.StatsTypeCore)
 	if err != nil {
-		slog.Error("companion get core stats", "error", err)
+		p.log.Error("get core stats", "error", err)
 	} else if coreStats.Core != nil {
 		ds.BatteryMV = coreStats.Core.BatteryMV
 		ds.UptimeSecs = coreStats.Core.UptimeSecs
 	}
 
-	slog.Log(ctx, LevelTrace, "companion stats",
+	p.log.Log(ctx, LevelTrace, "stats polled",
 		"noise_floor", ds.NoiseFloor, "battery_mv", ds.BatteryMV,
 		"uptime_secs", ds.UptimeSecs)
 	return ds

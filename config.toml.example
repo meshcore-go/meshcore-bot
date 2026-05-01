@@ -16,7 +16,7 @@ tx = 22
 name = "Ping Bot"
 
 [[bot.trigger]]
-type = "group"
+type = "channel"
 template = "@[{{.Sender}}] HashSize={{.PathHashSize}} Hops={{.Hops}} Paths={{.PathHashes | formatPathBytes}}"
 channels = ["#testing"]
-match = ["(?i)^test*", "(?i)^ping*"]
+match = ["(?i)^test.*", "(?i)^ping.*"]

@@ -14,17 +14,19 @@ type CronTrigger struct {
 	cfg      TriggerConfig
 	botName  string
 	cron     *cron.Cron
+	log      *slog.Logger
 	mu       sync.Mutex
 	callback TriggerCallback
 }
 
-func NewCronTrigger(botName string, cfg TriggerConfig) (*CronTrigger, error) {
+func NewCronTrigger(botName string, cfg TriggerConfig, log *slog.Logger) (*CronTrigger, error) {
 	if cfg.Schedule == "" {
 		return nil, fmt.Errorf("cron trigger requires a schedule")
 	}
 	return &CronTrigger{
 		cfg:     cfg,
 		botName: botName,
+		log:     log.With("trigger", "cron", "schedule", cfg.Schedule),
 	}, nil
 }
 
@@ -41,8 +43,7 @@ func (t *CronTrigger) Start(ctx context.Context, callback TriggerCallback) error
 		default:
 		}
 
-		slog.Log(ctx, LevelTrace, "cron fired",
-			"bot", t.botName, "schedule", t.cfg.Schedule)
+		t.log.Log(ctx, LevelTrace, "cron fired")
 
 		t.mu.Lock()
 		cb := t.callback

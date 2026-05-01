@@ -1,31 +1,47 @@
 # meshcore-bot
 
-meshcore-bot - A configurable bot framework for MeshCore mesh networks, built with the pure Go [meshcore-go](https://github.com/meshcore-go/meshcore-go) library.
+A configurable bot framework for [MeshCore](https://github.com/meshcore-dev/MeshCore) mesh networks, built with the pure Go [meshcore-go](https://github.com/meshcore-go/meshcore-go) library.
 
 ## Features
 
-- **Trigger-based architecture**:
-  - **Group message triggers**: Listen to group channel messages with optional regex matching.
-  - **Cron scheduled triggers**: Fire actions on a defined cron schedule.
-- **Go template responses**: Access mesh data like sender, hops, path hashes, SNR, RSSI, and more in your responses.
+- **Trigger-based architecture**: Respond to group messages, private channel messages, or on a cron schedule.
+- **Go template responses**: Access mesh data like sender, hops, path hashes, SNR, RSSI, and more.
 - **Two node types**:
-  - **KISS**: Direct radio control via hardware.
-  - **Companion**: Piggyback on an existing MeshCore device via the companion client.
-- **Hot-reload**: Reload configuration via `SIGHUP` without restarting the process. Reconnects the modem if connection settings change.
+  - **KISS** (recommended): Direct radio control via hardware.
+  - **Companion** (experimental): Piggyback on an existing MeshCore device via the companion client.
+- **Private channel support**: Join private channels using a hex-encoded PSK.
+- **MQTT integration**: Publish observed mesh traffic to MQTT brokers (e.g. [LetsMesh](https://letsmesh.net), [CoreScope](https://github.com/Kpa-clawbot/CoreScope)).
+- **Hot-reload**: Reload configuration via `SIGHUP` without restarting. Reconnects the modem if connection settings change.
 - **Multi-bot support**: Run multiple bots within a single instance.
 - **Flexible configuration**: Supports TOML, YAML, and JSON formats.
 
-## Quick Start
+## Installation
 
-### Installation
+### Download a Release Binary (Recommended)
 
-Ensure you have Go 1.26+ installed.
+Pre-built binaries are available for Linux, macOS, and Windows on the [Releases](https://github.com/meshcore-go/meshcore-bot/releases) page.
+
+1. Go to the [latest release](https://github.com/meshcore-go/meshcore-bot/releases/latest).
+2. Download the binary for your platform (e.g. `meshcore-bot-linux-arm64` for a Raspberry Pi).
+3. Make it executable and move it to a folder of your choosing:
 
 ```bash
-go install github.com/meshcore-go/meshcore-bot@latest
+chmod +x meshcore-bot-linux-arm64
+sudo mv meshcore-bot-linux-arm64 /usr/local/bin/meshcore-bot
 ```
 
-Alternatively, clone and build:
+### Docker
+
+Images are published to `ghcr.io/meshcore-go/meshcore-bot` for the following platforms:
+`linux/386`, `linux/amd64`, `linux/arm/v6`, `linux/arm/v7`, `linux/arm64/v8`, `linux/ppc64le`, `linux/riscv64`, `linux/s390x`.
+
+```bash
+docker pull ghcr.io/meshcore-go/meshcore-bot:latest
+```
+
+### Build from Source
+
+Requires Go 1.26.1+.
 
 ```bash
 git clone https://github.com/meshcore-go/meshcore-bot.git
@@ -33,79 +49,164 @@ cd meshcore-bot
 go build -o meshcore-bot
 ```
 
-### Running
+## Running
 
-The bot looks for `config.toml`, `config.yaml`, `config.yml`, or `config.json` in the current directory by default.
+The bot looks for `config.toml`, `config.yaml`, `config.yml`, or `config.json` in the current directory.
+
+### Step 1: Plug in your radio
+
+Connect your MeshCore radio to your computer via USB. On Linux it usually shows up as `/dev/ttyACM0`. On macOS it's something like `/dev/cu.usbmodem*`.
+
+On Linux, your user needs permission to access serial devices. Add yourself to the `dialout` group:
+
+```bash
+sudo usermod -a -G dialout $USER
+```
+
+Log out and back in (or reboot) for the change to take effect.
+
+### Step 2: Create a config file
+
+Create a file called `config.toml` in the same folder as the binary. Here's a minimal example that responds to "ping" on the `#testing` channel:
+
+```toml
+nodeType = "kiss"
+connection = "serial:///dev/ttyACM0"
+
+freq = 917.375
+bw = 62.50
+sf = 7
+cr = 8
+tx = 2
+
+[[bot]]
+name = "My Bot"
+
+[[bot.trigger]]
+type = "channel"
+template = "Pong! Hello {{.Sender}}"
+channels = ["#testing"]
+match = ["(?i)^ping"]
+```
+
+### Step 3: Run it
 
 ```bash
 ./meshcore-bot
 ```
 
-## Configuration
+That's it. The bot will connect to your radio, join the `#testing` channel, and reply "Pong! Hello \<sender\>" whenever someone sends a message starting with "ping".
 
-The configuration file defines how the bot connects to the mesh and what triggers it responds to.
+### Using Docker
 
-### Node Types
+Mount your config file and pass through the serial device:
 
-- `kiss`: Direct radio control. Requires radio settings.
-- `companion`: Connects to an existing MeshCore device.
+```bash
+docker run --rm \
+  --device /dev/ttyACM0 \
+  -v ./config.toml:/config.toml \
+  ghcr.io/meshcore-go/meshcore-bot
+```
 
-### Connection URI
+For TCP connections (e.g. companion mode via a serial-to-TCP bridge), no `--device` is needed:
 
-Connection strings use the format `scheme://address`:
-- `serial:///dev/ttyACM0`
-- `tcp://127.0.0.1:8001`
+```bash
+docker run --rm \
+  -v ./config.toml:/config.toml \
+  ghcr.io/meshcore-go/meshcore-bot
+```
+
+Pass CLI flags directly:
+
+```bash
+docker run --rm \
+  --device /dev/ttyACM0 \
+  -v ./my-config.toml:/my-config.toml \
+  ghcr.io/meshcore-go/meshcore-bot -c /my-config.toml -v
+```
+
+## Configuration Reference
+
+### Connection
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `nodeType` | `"kiss"` (direct radio) or `"companion"` (piggyback on existing device) | `"kiss"` |
+| `connection` | `serial:///dev/ttyACM0` or `tcp://host:port` | `serial:///dev/ttyACM0` |
+| `baudRate` | Serial baud rate | `115200` |
 
 ### Radio Settings (KISS only)
 
-- `freq`: Frequency in MHz (e.g., 917.375)
-- `bw`: Bandwidth in kHz (e.g., 62.5)
-- `sf`: Spreading Factor (e.g., 7)
-- `cr`: Coding Rate (e.g., 8)
-- `tx`: TX Power (e.g., 2)
+| Field | Description | Default |
+|-------|-------------|---------|
+| `freq` | Frequency in MHz | `917.375` |
+| `bw` | Bandwidth in kHz | `62.50` |
+| `sf` | Spreading Factor | `7` |
+| `cr` | Coding Rate | `8` |
+| `tx` | TX Power | `2` |
 
-### Bot Definition
+### Triggers
 
-Each bot has a `name` and an array of `triggers`.
+Each bot has a `name` and an array of `triggers`. Every trigger has a `type` and a `template`.
 
-#### Trigger Types
+#### Channels
 
-**Group Trigger (`type = "group"`)**
-- `match`: Array of regex patterns to match against incoming messages.
-- `channels`: List of channels to listen on (e.g., `["#testing"]`).
-- `template`: Go text/template for the response.
+The `channels` field accepts either plain channel names (for public/hashtag channels) or objects with a `privateKey` for private channels:
 
-**Cron Trigger (`type = "cron"`)**
-- `schedule`: Cron expression (e.g., `0 * * * *`).
-- `channels`: List of channels to send the message to.
-- `template`: Go text/template for the message.
+```toml
+# Public channels — just use the name
+channels = ["#general", "#testing"]
 
-### Template System
+# Private channels — use the [[bot.trigger.channels]] syntax
+[[bot.trigger.channels]]
+name = "Secret Ops"
+privateKey = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+```
 
-Responses use Go's `text/template` engine.
+#### Channel Trigger (`type = "channel"`)
 
-**Available Variables (Group Trigger):**
-- `{{.Sender}}`: Sender's node ID.
-- `{{.Channel}}`: Channel name.
-- `{{.Message}}`: Original message text.
-- `{{.Match}}`: Map of named regex capture groups.
-- `{{.Timestamp}}`: Message timestamp.
-- `{{.SNR}}`: Signal-to-Noise Ratio.
-- `{{.RSSI}}`: Received Signal Strength Indicator.
-- `{{.Hops}}`: Number of hops.
-- `{{.PathHashes}}`: Raw path hashes.
-- `{{.PathHashSize}}`: Size of path hashes.
+Fires when a message is received on a channel that matches one of the `match` patterns.
 
-**Available Variables (Cron Trigger):**
-- `{{.Time}}`: Current time.
-- `{{.Schedule}}`: The cron schedule string.
+| Field | Description |
+|-------|-------------|
+| `channels` | Channels to listen on |
+| `match` | Array of [Go regular expressions](https://pkg.go.dev/regexp/syntax) to match against incoming messages |
+| `template` | Go text/template for the response |
+
+#### Cron Trigger (`type = "cron"`)
+
+Fires on a schedule.
+
+| Field | Description |
+|-------|-------------|
+| `schedule` | Cron expression (e.g. `"*/5 * * * *"`) |
+| `channels` | Channels to send the message to |
+| `template` | Go text/template for the message |
+
+### Template Variables
+
+**Channel Trigger:**
+- `{{.Sender}}` — Sender's node name
+- `{{.Channel}}` — Channel name
+- `{{.Message}}` — Original message text
+- `{{.Match}}` — Map of named regex capture groups
+- `{{.Timestamp}}` — Message timestamp
+- `{{.SNR}}` — Signal-to-Noise Ratio
+- `{{.RSSI}}` — Received Signal Strength Indicator
+- `{{.Hops}}` — Number of hops
+- `{{.PathHashes}}` — Raw path hashes
+- `{{.PathHashSize}}` — Size of path hashes
+
+**Cron Trigger:**
+- `{{.Time}}` — Current time
+- `{{.Schedule}}` — The cron schedule string
 
 **Built-in Functions:**
-- `formatPathBytes`: Formats raw path hashes into a readable string.
+- `formatPathBytes` — Formats raw path hashes into a readable string.
 
 ## Example Configs
 
-### KISS Node (Direct Radio)
+### KISS Node with Private Channel
 
 ```toml
 nodeType = "kiss"
@@ -122,10 +223,13 @@ tx = 22
 name = "Ping Bot"
 
 [[bot.trigger]]
-type = "group"
+type = "channel"
 template = "@[{{.Sender}}] 🦈={{.PathHashSize}} 🦘={{.Hops}} 🛣️={{.PathHashes | formatPathBytes}}"
-channels = ["#testing"]
-match = ["(?i)^test*", "(?i)^ping*"]
+match = ["(?i)^test", "(?i)^ping"]
+
+[[bot.trigger.channels]]
+name = "WesTest"
+privateKey = "89677d1a2c40f0b0d873364c25dc6259"
 ```
 
 ### Companion Node
@@ -138,7 +242,7 @@ connection = "tcp://127.0.0.1:8001"
 name = "Companion Bot"
 
 [[bot.trigger]]
-type = "group"
+type = "channel"
 template = "I am running via companion! Hello {{.Sender}}"
 channels = ["#westest"]
 match = ["(?i)^!hello"]
@@ -156,72 +260,68 @@ template = "Periodic update: The time is {{.Time}}"
 
 ## CLI Flags
 
-- `-c, --config PATH`: Path to the configuration file.
-- `-V, --version`: Print version and exit.
-- `-v, --verbose`: Enable verbose debug logging.
+| Flag | Description |
+|------|-------------|
+| `-c, --config PATH` | Path to the configuration file |
+| `-V, --version` | Print version and exit |
+| `-v, --verbose` | Enable verbose debug logging |
 
-## Docker
+## MQTT Integration
 
-Images are published to `ghcr.io/meshcore-go/meshcore-bot` for the following platforms:
+meshcore-bot can publish observed mesh traffic to MQTT brokers. This is used by services like [LetsMesh](https://letsmesh.net) to aggregate mesh network data.
 
-- `linux/386`
-- `linux/amd64`
-- `linux/arm/v6`
-- `linux/arm/v7`
-- `linux/arm64/v8`
-- `linux/ppc64le`
-- `linux/riscv64`
-- `linux/s390x`
+Each `[[observer]]` defines an MQTT observer node that forwards packets to one or more brokers. A unique identity key file is used for authentication.
 
-```bash
-docker pull ghcr.io/meshcore-go/meshcore-bot:latest
+```toml
+[[observer]]
+name = "AKL Bot"
+iataCode = "AKL"
+keyFile = "mqtt_identity.key"
+statusInterval = 300
+
+[[observer.broker]]
+name = "US West (LetsMesh v1)"
+enabled = true
+transport = "wss"
+host = "mqtt-us-v1.letsmesh.net"
+port = 443
+topicPrefix = "meshcore"
+retainStatus = false
+tlsEnabled = true
+authType = "token"
+audience = "mqtt-us-v1.letsmesh.net"
 ```
 
-Mount your config file and pass through the serial device:
+| Observer Field | Description |
+|----------------|-------------|
+| `name` | Display name for this observer |
+| `iataCode` | Location identifier (e.g. airport code) |
+| `keyFile` | Path to the identity key file (created automatically if missing) |
+| `statusInterval` | Seconds between status publishes (default: 300) |
 
-```bash
-docker run --rm \
-  --device /dev/ttyACM0 \
-  -v ./config.toml:/config.toml \
-  ghcr.io/meshcore-go/meshcore-bot
-```
-
-If the device path inside the container differs from the host, update `connection` in your config to match, or use a consistent path:
-
-```bash
-docker run --rm \
-  --device /dev/ttyACM0:/dev/ttyACM0 \
-  -v ./config.toml:/config.toml \
-  ghcr.io/meshcore-go/meshcore-bot
-```
-
-For TCP connections (e.g. to a remote device or serial-to-TCP bridge), no `--device` is needed:
-
-```bash
-docker run --rm \
-  -v ./config.toml:/config.toml \
-  ghcr.io/meshcore-go/meshcore-bot
-```
-
-You can pass CLI flags directly:
-
-```bash
-docker run --rm \
-  --device /dev/ttyACM0 \
-  -v ./my-config.toml:/my-config.toml \
-  ghcr.io/meshcore-go/meshcore-bot -c /my-config.toml -v
-```
+| Broker Field | Description |
+|--------------|-------------|
+| `name` | Display name for this broker |
+| `enabled` | Enable/disable this broker |
+| `transport` | `"wss"` (WebSocket Secure) or `"tcp"` |
+| `host` | Broker hostname |
+| `port` | Broker port |
+| `topicPrefix` | MQTT topic prefix |
+| `retainStatus` | Retain status messages on the broker |
+| `tlsEnabled` | Enable TLS |
+| `authType` | `"token"`, `"basic"`, or `"none"` |
+| `audience` | Token audience (for token auth) |
 
 ## Hot Reload
 
-Send a `SIGHUP` signal to the process to reload the configuration:
+Send a `SIGHUP` signal to the process to reload the configuration without restarting:
 
 ```bash
 kill -SIGHUP $(pgrep meshcore-bot)
 ```
 
-If the connection settings or radio parameters change, the bot will automatically reconnect to the modem.
+If the connection settings or radio parameters change, the bot will automatically reconnect.
 
 ## License
 
-MIT
+See [LICENSE](LICENSE).

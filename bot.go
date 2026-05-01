@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -25,6 +26,7 @@ type Bot struct {
 	sender    Sender
 	templater *Templater
 	triggers  []triggerEntry
+	log       *slog.Logger
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -38,9 +40,10 @@ func NewBot(cfg BotConfig, mux *node.RadioMux, sf SenderFactory) (*Bot, error) {
 
 	identity := identityFromName(botName)
 	radio := mux.NewRadio()
+	log := slog.Default().With("component", "bot", "bot", botName)
 	n := node.New(identity, radio,
 		node.WithErrorHandler(func(err error) {
-			slog.Error("node error", "bot", botName, "error", err)
+			log.Error("node error", "error", err)
 		}),
 	)
 
@@ -52,14 +55,18 @@ func NewBot(cfg BotConfig, mux *node.RadioMux, sf SenderFactory) (*Bot, error) {
 		radio:     radio,
 		sender:    sender,
 		templater: NewTemplater(),
+		log:       log,
 	}
 
 	channelIdx := 0
 	for _, trigCfg := range cfg.Triggers {
 		var channels []*meshcore.ChannelEntry
 		if trigCfg.Channels != nil {
-			for _, chName := range *trigCfg.Channels {
-				ch := channelFromName(chName)
+			for _, chRef := range *trigCfg.Channels {
+				ch, err := channelFromRef(chRef)
+				if err != nil {
+					return nil, fmt.Errorf("invalid channel %q: %w", chRef.Name, err)
+				}
 				channels = append(channels, ch)
 				n.SetChannel(channelIdx, ch)
 				sender.RegisterChannel(channelIdx, ch)
@@ -83,10 +90,10 @@ func (b *Bot) buildTrigger(cfg TriggerConfig, channels []*meshcore.ChannelEntry)
 	var err error
 
 	switch cfg.Type {
-	case "group":
-		t, err = NewGroupTrigger(b.name, cfg, b.node, channels)
+	case "channel", "group":
+		t, err = NewChannelTrigger(b.name, cfg, b.node, channels, b.log)
 	case "cron":
-		t, err = NewCronTrigger(b.name, cfg)
+		t, err = NewCronTrigger(b.name, cfg, b.log)
 	default:
 		return nil, fmt.Errorf("unknown trigger type %q", cfg.Type)
 	}
@@ -136,38 +143,59 @@ func (b *Bot) makeCallback(ctx context.Context, entry triggerEntry) TriggerCallb
 	return func(evt TriggerEvent) {
 		rendered, err := b.templater.Render(&evt, entry.config.Template)
 		if err != nil {
-			slog.Error("template error", "bot", b.name, "error", err)
+			b.log.Error("template error", "error", err)
 			return
 		}
 
-		slog.Log(ctx, LevelTrace, "template rendered",
-			"bot", b.name, "trigger", evt.Type, "output", rendered)
+		b.log.Log(ctx, LevelTrace, "template rendered",
+			"trigger", evt.Type, "output", rendered)
+
+		hashSize := resolvePathHashSize(entry.config.PathHashSize, evt)
 
 		switch evt.Type {
-		case "group":
+		case "channel":
 			ch, _ := evt.Data["ChannelEntry"].(*meshcore.ChannelEntry)
-			slog.Debug("sending group txt", "bot", b.name, "channel", ch.Name)
-			if err := b.sender.SendGroupText(ctx, ch, b.name, rendered); err != nil {
-				slog.Error("send error", "bot", b.name, "error", err)
+			b.log.Debug("sending group txt", "channel", ch.Name, "pathHashSize", hashSize)
+			if err := b.sender.SendGroupText(ctx, ch, b.name, rendered, hashSize); err != nil {
+				b.log.Error("send error", "error", err)
 			}
 		case "cron":
 			for _, ch := range entry.channels {
-				slog.Debug("sending group txt", "bot", b.name, "channel", ch.Name)
-				if err := b.sender.SendGroupText(ctx, ch, b.name, rendered); err != nil {
-					slog.Error("send error", "bot", b.name, "error", err)
+				b.log.Debug("sending group txt", "channel", ch.Name, "pathHashSize", hashSize)
+				if err := b.sender.SendGroupText(ctx, ch, b.name, rendered, hashSize); err != nil {
+					b.log.Error("send error", "error", err)
 				}
 			}
 		}
 	}
 }
 
-func channelFromName(name string) *meshcore.ChannelEntry {
-	if strings.EqualFold(name, "Public") {
-		ch, _ := meshcore.NewChannelFromBase64("Public", "izOH6cXN6mrJ5e26oRXNcg==")
-		return ch
+func resolvePathHashSize(configured *uint8, evt TriggerEvent) uint8 {
+	if configured == nil {
+		return 1
 	}
-	nCh := meshcore.NormalizeHashtag(name)
-	return meshcore.NewChannelFromHashtag(nCh)
+	if *configured >= 1 && *configured <= 4 {
+		return *configured
+	}
+	if incoming, ok := evt.Data["PathHashSize"].(uint8); ok && incoming >= 1 && incoming <= 4 {
+		return incoming
+	}
+	return 1
+}
+
+func channelFromRef(ref ChannelRef) (*meshcore.ChannelEntry, error) {
+	if ref.PrivateKey != "" {
+		psk, err := hex.DecodeString(ref.PrivateKey)
+		if err != nil {
+			return nil, fmt.Errorf("invalid hex privateKey for channel %q: %w", ref.Name, err)
+		}
+		return meshcore.NewChannelFromPSK(ref.Name, psk)
+	}
+	if strings.EqualFold(ref.Name, "Public") {
+		return meshcore.NewChannelFromBase64("Public", "izOH6cXN6mrJ5e26oRXNcg==")
+	}
+	nCh := meshcore.NormalizeHashtag(ref.Name)
+	return meshcore.NewChannelFromHashtag(nCh), nil
 }
 
 func identityFromName(name string) meshcore.LocalIdentity {

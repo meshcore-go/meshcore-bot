@@ -14,7 +14,7 @@ import (
 )
 
 type Sender interface {
-	SendGroupText(ctx context.Context, channel *meshcore.ChannelEntry, senderName string, text string) error
+	SendGroupText(ctx context.Context, channel *meshcore.ChannelEntry, senderName string, text string, pathHashSize uint8) error
 	RegisterChannel(idx int, channel *meshcore.ChannelEntry)
 }
 
@@ -30,7 +30,7 @@ func NewNodeSender(n *node.Node) *NodeSender {
 
 func (s *NodeSender) RegisterChannel(_ int, _ *meshcore.ChannelEntry) {}
 
-func (s *NodeSender) SendGroupText(_ context.Context, channel *meshcore.ChannelEntry, senderName string, text string) error {
+func (s *NodeSender) SendGroupText(_ context.Context, channel *meshcore.ChannelEntry, senderName string, text string, pathHashSize uint8) error {
 	reply := &meshcore.GroupTextPayload{
 		Timestamp: uint32(time.Now().Unix()),
 		Sender:    senderName,
@@ -47,9 +47,16 @@ func (s *NodeSender) SendGroupText(_ context.Context, channel *meshcore.ChannelE
 		return fmt.Errorf("serialize: %w", err)
 	}
 
+	if pathHashSize < 1 {
+		pathHashSize = 1
+	}
+	if pathHashSize > 4 {
+		pathHashSize = 4
+	}
+
 	pkt := &meshcore.Packet{
 		Header:     meshcore.MakeHeader(meshcore.RouteTypeFlood, meshcore.PayloadTypeGrpTxt, 0),
-		PathLength: 0x00,
+		PathLength: (pathHashSize - 1) << 6,
 		Payload:    payload,
 	}
 
@@ -61,6 +68,7 @@ const maxDeviceChannels = 16
 type CompanionSender struct {
 	ctx    context.Context
 	client *companionClient.Client
+	log    *slog.Logger
 
 	mu       sync.RWMutex
 	channels map[string]byte // normalized name -> device slot index
@@ -71,6 +79,7 @@ func NewCompanionSender(ctx context.Context, c *companionClient.Client) (*Compan
 		ctx:      ctx,
 		client:   c,
 		channels: make(map[string]byte),
+		log:      slog.Default().With("component", "sender", "type", "companion"),
 	}
 
 	if err := s.loadDeviceChannels(); err != nil {
@@ -91,7 +100,7 @@ func (s *CompanionSender) loadDeviceChannels() error {
 		}
 		name := normalizeChannelName(info.Name)
 		s.channels[name] = i
-		slog.Debug("found device channel", "idx", i, "name", name)
+		s.log.Debug("found device channel", "idx", i, "name", name)
 	}
 	return nil
 }
@@ -108,17 +117,17 @@ func (s *CompanionSender) RegisterChannel(_ int, channel *meshcore.ChannelEntry)
 
 	idx, err := s.findEmptySlot()
 	if err != nil {
-		slog.Error("no empty channel slot", "channel", name, "error", err)
+		s.log.Error("no empty channel slot", "channel", name, "error", err)
 		return
 	}
 
 	if err := s.client.SetChannel(s.ctx, idx, name, channel.PSK); err != nil {
-		slog.Error("failed to set channel on device", "channel", name, "idx", idx, "error", err)
+		s.log.Error("failed to set channel on device", "channel", name, "idx", idx, "error", err)
 		return
 	}
 
 	s.channels[name] = idx
-	slog.Info("configured channel on device", "channel", name, "idx", idx)
+	s.log.Info("configured channel on device", "channel", name, "idx", idx)
 }
 
 func (s *CompanionSender) findEmptySlot() (byte, error) {
@@ -134,7 +143,7 @@ func (s *CompanionSender) findEmptySlot() (byte, error) {
 	return 0, fmt.Errorf("all %d channel slots occupied", maxDeviceChannels)
 }
 
-func (s *CompanionSender) SendGroupText(ctx context.Context, channel *meshcore.ChannelEntry, _ string, text string) error {
+func (s *CompanionSender) SendGroupText(ctx context.Context, channel *meshcore.ChannelEntry, _ string, text string, _ uint8) error {
 	name := normalizeChannelName(channel.Name)
 
 	s.mu.RLock()

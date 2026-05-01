@@ -2,22 +2,85 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
 )
 
+type ChannelRef struct {
+	Name       string `json:"name" yaml:"name" toml:"name"`
+	PrivateKey string `json:"privateKey,omitempty" yaml:"privateKey,omitempty" toml:"privateKey,omitempty"`
+}
+
+func (cr *ChannelRef) UnmarshalText(text []byte) error {
+	cr.Name = string(text)
+	return nil
+}
+
+type ChannelList []ChannelRef
+
+func (cl *ChannelList) UnmarshalJSON(data []byte) error {
+	var raw []json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("channels must be an array: %w", err)
+	}
+
+	result := make(ChannelList, 0, len(raw))
+	for _, item := range raw {
+		var s string
+		if err := json.Unmarshal(item, &s); err == nil {
+			result = append(result, ChannelRef{Name: s})
+			continue
+		}
+		var ref ChannelRef
+		if err := json.Unmarshal(item, &ref); err != nil {
+			return fmt.Errorf("channel entry must be a string or {name, privateKey} object: %w", err)
+		}
+		result = append(result, ref)
+	}
+	*cl = result
+	return nil
+}
+
+func (cl *ChannelList) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.SequenceNode {
+		return fmt.Errorf("channels must be a sequence")
+	}
+
+	result := make(ChannelList, 0, len(value.Content))
+	for _, node := range value.Content {
+		switch node.Kind {
+		case yaml.ScalarNode:
+			result = append(result, ChannelRef{Name: node.Value})
+		case yaml.MappingNode:
+			var ref ChannelRef
+			if err := node.Decode(&ref); err != nil {
+				return fmt.Errorf("channel entry decode error: %w", err)
+			}
+			result = append(result, ref)
+		default:
+			return fmt.Errorf("channel entry must be a string or mapping")
+		}
+	}
+	*cl = result
+	return nil
+}
+
 type TriggerConfig struct {
-	Type     string `json:"type" yaml:"type" toml:"type"` // group, dm, cron, cap, etc
+	Type     string `json:"type" yaml:"type" toml:"type"` // group, private, dm, cron, cap, etc
 	Template string `json:"template" yaml:"template" toml:"template"`
 
 	// Message Overflow behaviour
 	CharLimitBehaviour *string `json:"charLimitBehaviour" yaml:"charLimitBehaviour" toml:"charLimitBehaviour"` // e.g. truncate or split
 
 	// Messages/DMs
-	Match    *[]string `json:"match" yaml:"match" toml:"match"`          // Patterns to match against (supports wildcards/regex)
-	Channels *[]string `json:"channels" yaml:"channels" toml:"channels"` // What channels to listen in for Group Messages
-	Contacts *[]string `json:"contacts" yaml:"contacts" toml:"contact"`  // What Contacts to listen in for DMs
+	Match    *[]string    `json:"match" yaml:"match" toml:"match"`          // Patterns to match against (supports wildcards/regex)
+	Channels *ChannelList `json:"channels" yaml:"channels" toml:"channels"` // Channels to listen on (strings or {name, privateKey} objects)
+	Contacts *[]string    `json:"contacts" yaml:"contacts" toml:"contact"`  // What Contacts to listen in for DMs
+
+	// Path Hash Size: 1-4 = fixed size, 0 = mirror incoming packet's hash size, nil = default (1)
+	PathHashSize *uint8 `json:"pathHashSize,omitempty" yaml:"pathHashSize,omitempty" toml:"pathHashSize,omitempty"`
 
 	// Cron Trigger
 	Schedule string `json:"schedule,omitempty" yaml:"schedule,omitempty" toml:"schedule,omitempty"`

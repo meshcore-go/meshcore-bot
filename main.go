@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -20,7 +21,7 @@ import (
 	flag "github.com/spf13/pflag"
 )
 
-var version = "v1.0.1-dev"
+var version = "v1.0.3-dev"
 
 const LevelTrace = slog.Level(-8)
 
@@ -39,6 +40,7 @@ type modemState struct {
 	modem       node.Modem
 	companionCl *companionClient.Client
 	stats       StatsProvider
+	recvErrors  *atomic.Uint64
 	closers     []io.Closer
 }
 
@@ -99,7 +101,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	mux := node.NewRadioMux(ms.modem)
+	mux := node.NewRadioMux(ms.modem, node.WithMuxLogger(slog.Default()), node.WithMuxErrorHandler(func(err error) {
+		slog.Debug("mux receive error", "component", "modem", "error", err)
+		ms.recvErrors.Add(1)
+	}))
 
 	bots, err := startBots(ctx, cfg, ms, mux)
 	if err != nil {
@@ -108,7 +113,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	observers, err := startObservers(ctx, cfg, mux, ms.stats)
+	observers, err := startObservers(ctx, cfg, mux, ms.stats, ms.recvErrors)
 	if err != nil {
 		slog.Error("mqtt observer startup failed", "error", err)
 	}
@@ -148,7 +153,10 @@ func main() {
 					slog.Error("modem reconnect failed", "error", err)
 					os.Exit(1)
 				}
-				mux = node.NewRadioMux(ms.modem)
+				mux = node.NewRadioMux(ms.modem, node.WithMuxLogger(slog.Default()), node.WithMuxErrorHandler(func(err error) {
+					slog.Debug("mux receive error", "component", "modem", "error", err)
+					ms.recvErrors.Add(1)
+				}))
 			}
 
 			bots, err = startBots(ctx, newCfg, ms, mux)
@@ -157,7 +165,7 @@ func main() {
 				os.Exit(1)
 			}
 
-			observers, err = startObservers(ctx, newCfg, mux, ms.stats)
+			observers, err = startObservers(ctx, newCfg, mux, ms.stats, ms.recvErrors)
 			if err != nil {
 				slog.Error("mqtt observer restart failed after reload", "error", err)
 			}
@@ -219,7 +227,9 @@ func derefUint8(p *uint8) uint8 {
 }
 
 func setupModem(ctx context.Context, cfg *Config) (*modemState, error) {
-	ms := &modemState{}
+	ms := &modemState{
+		recvErrors: &atomic.Uint64{},
+	}
 
 	conn := *cfg.Connection
 	connScheme, connAddr, ok := parseConnection(conn)
@@ -243,7 +253,7 @@ func setupModem(ctx context.Context, cfg *Config) (*modemState, error) {
 			})
 		}
 
-		kissModem := hardware.NewKissModem(t, hardware.WithSignalReport(true))
+		kissModem := hardware.NewKissModem(t, hardware.WithSignalReport(true), hardware.WithLogger(slog.Default()))
 
 		connectCtx, connectCancel := context.WithTimeout(ctx, 10*time.Second)
 		defer connectCancel()
@@ -298,7 +308,7 @@ func setupModem(ctx context.Context, cfg *Config) (*modemState, error) {
 		client := companionClient.New(t)
 		ms.companionCl = client
 		client.SetErrorHandler(func(err error) {
-			slog.Error("companion error", "error", err)
+			slog.Error("companion error", "component", "modem", "error", err)
 		})
 
 		connectCtx, connectCancel := context.WithTimeout(ctx, 10*time.Second)
@@ -366,7 +376,7 @@ func stopBots(bots []*Bot) {
 	}
 }
 
-func startObservers(ctx context.Context, cfg *Config, mux *node.RadioMux, stats StatsProvider) ([]*MqttObserver, error) {
+func startObservers(ctx context.Context, cfg *Config, mux *node.RadioMux, stats StatsProvider, recvErrors *atomic.Uint64) ([]*MqttObserver, error) {
 	var observers []*MqttObserver
 	for _, obsCfg := range cfg.Observers {
 		keyFile := "mqtt_identity.key"
@@ -379,7 +389,7 @@ func startObservers(ctx context.Context, cfg *Config, mux *node.RadioMux, stats 
 			return nil, fmt.Errorf("mqtt identity: %w", err)
 		}
 
-		obs, err := NewMqttObserver(obsCfg, mux, id, stats)
+		obs, err := NewMqttObserver(obsCfg, mux, id, stats, recvErrors)
 		if err != nil {
 			stopObservers(observers)
 			return nil, fmt.Errorf("creating mqtt observer: %w", err)
