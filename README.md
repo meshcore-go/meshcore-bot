@@ -1,6 +1,6 @@
 # meshcore-bot
 
-A configurable bot framework for [MeshCore](https://github.com/ripplebiz/MeshCore) mesh networks, built with the pure Go [meshcore-go](https://github.com/meshcore-go/meshcore-go) library.
+A configurable bot framework for [MeshCore](https://github.com/meshcore-dev/MeshCore) mesh networks, built with the pure Go [meshcore-go](https://github.com/meshcore-go/meshcore-go) library.
 
 ## Features
 
@@ -10,7 +10,7 @@ A configurable bot framework for [MeshCore](https://github.com/ripplebiz/MeshCor
   - **KISS** (recommended): Direct radio control via hardware.
   - **Companion** (experimental): Piggyback on an existing MeshCore device via the companion client.
 - **Private channel support**: Join private channels using a hex-encoded PSK.
-- **MQTT integration**: Publish observed mesh traffic to MQTT brokers (e.g. [LetsMesh](https://letsmesh.net)).
+- **MQTT integration**: Publish observed mesh traffic to MQTT brokers (e.g. [LetsMesh](https://letsmesh.net), [CoreScope](https://github.com/Kpa-clawbot/CoreScope)).
 - **Hot-reload**: Reload configuration via `SIGHUP` without restarting. Reconnects the modem if connection settings change.
 - **Multi-bot support**: Run multiple bots within a single instance.
 - **Flexible configuration**: Supports TOML, YAML, and JSON formats.
@@ -23,7 +23,7 @@ Pre-built binaries are available for Linux, macOS, and Windows on the [Releases]
 
 1. Go to the [latest release](https://github.com/meshcore-go/meshcore-bot/releases/latest).
 2. Download the binary for your platform (e.g. `meshcore-bot-linux-arm64` for a Raspberry Pi).
-3. Make it executable and move it somewhere in your PATH:
+3. Make it executable and move it to a folder of your choosing:
 
 ```bash
 chmod +x meshcore-bot-linux-arm64
