@@ -13,6 +13,7 @@ type MqttConfig struct {
 type BrokerConfig struct {
 	Name                  string   `json:"name" yaml:"name" toml:"name"`
 	Enabled               bool     `json:"enabled" yaml:"enabled" toml:"enabled"`
+	Dedup                 bool     `json:"dedup" yaml:"dedup" toml:"dedup"`             // Do we enable dedup checks
 	Transport             string   `json:"transport" yaml:"transport" toml:"transport"` // websockets or tcp
 	Host                  string   `json:"host" yaml:"host" toml:"host"`
 	Port                  int      `json:"port" yaml:"port" toml:"port"`
@@ -24,7 +25,7 @@ type BrokerConfig struct {
 	AuthType              string   `json:"authType" yaml:"authType" toml:"authType"` // token, basic, or none
 	Username              string   `json:"username" yaml:"username" toml:"username"`
 	Password              string   `json:"password" yaml:"password" toml:"password"`
-	Path                  string   `json:"path" yaml:"path" toml:"path"` // WebSocket path (default: /mqtt)
+	Path                  string   `json:"path" yaml:"path" toml:"path"` // WebSocket path (default: /)
 	Audience              string   `json:"audience" yaml:"audience" toml:"audience"`
 }
 

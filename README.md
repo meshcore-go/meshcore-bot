@@ -291,6 +291,30 @@ retainStatus = false
 tlsEnabled = true
 authType = "token"
 audience = "mqtt-us-v1.letsmesh.net"
+
+[[observer.broker]]
+name = "Europe (LetsMesh v1)"
+enabled = true
+transport = "wss"
+host = "mqtt-eu-v1.letsmesh.net"
+port = 443
+topicPrefix = "meshcore"
+retainStatus = false
+tlsEnabled = true
+authType = "token"
+audience = "mqtt-eu-v1.letsmesh.net"
+
+[[observer.broker]]
+name = "CoreScope NZ"
+enabled = true
+transport = "wss"
+host = "meshcore-mqtt-1.baird.io"
+port = 443
+topicPrefix = "meshcore"
+retainStatus = false
+tlsEnabled = true
+authType = "token"
+audience = "meshcore-mqtt-1.baird.io"
 ```
 
 | Observer Field | Description |
@@ -304,13 +328,19 @@ audience = "mqtt-us-v1.letsmesh.net"
 |--------------|-------------|
 | `name` | Display name for this broker |
 | `enabled` | Enable/disable this broker |
+| `dedup` | Enable per-broker packet deduplication (default: `false`) |
 | `transport` | `"wss"` (WebSocket Secure) or `"tcp"` |
 | `host` | Broker hostname |
 | `port` | Broker port |
+| `path` | WebSocket path (default: none) |
 | `topicPrefix` | MQTT topic prefix |
+| `disallowedPacketTypes` | Packet types to exclude (e.g. `["ack", "advert"]`) |
 | `retainStatus` | Retain status messages on the broker |
 | `tlsEnabled` | Enable TLS |
+| `tlsInsecure` | Skip TLS certificate verification |
 | `authType` | `"token"`, `"basic"`, or `"none"` |
+| `username` | Username for basic auth |
+| `password` | Password for basic auth |
 | `audience` | Token audience (for token auth) |
 
 ## Hot Reload
