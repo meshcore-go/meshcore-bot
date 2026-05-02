@@ -62,7 +62,7 @@ jobs:
           SUFFIX="${GOOS}-${GOARCH}"
           if [ -n "$GOARM" ]; then SUFFIX="${SUFFIX}v${GOARM}"; fi
           OUTPUT="meshcore-bot-${SUFFIX}${EXT}"
-          go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o "${OUTPUT}" .
+          CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o "${OUTPUT}" .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
