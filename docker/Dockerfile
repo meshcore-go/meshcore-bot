@@ -21,4 +21,8 @@ RUN case "${TARGETPLATFORM}" in \
     chmod +x /usr/local/bin/meshcore-bot && \
     rm -rf /tmp/bin
 
-ENTRYPOINT ["meshcore-bot"]
+VOLUME [ "/data" ]
+
+WORKDIR /data
+
+CMD ["/usr/local/bin/meshcore-bot"]

@@ -21,7 +21,7 @@ import (
 	flag "github.com/spf13/pflag"
 )
 
-var version = "v1.0.3-dev"
+var version = "dev"
 
 const LevelTrace = slog.Level(-8)
 

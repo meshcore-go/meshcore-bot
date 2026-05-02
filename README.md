@@ -102,27 +102,28 @@ That's it. The bot will connect to your radio, join the `#testing` channel, and 
 Mount your config file and pass through the serial device:
 
 ```bash
-docker run --rm \
+docker run -d \
   --device /dev/ttyACM0 \
-  -v ./config.toml:/config.toml \
+  -v ./config.toml:/data/config.toml \
   ghcr.io/meshcore-go/meshcore-bot
 ```
 
 For TCP connections (e.g. companion mode via a serial-to-TCP bridge), no `--device` is needed:
 
 ```bash
-docker run --rm \
-  -v ./config.toml:/config.toml \
+docker run -d \
+  -v ./config.toml:/data/config.toml \
   ghcr.io/meshcore-go/meshcore-bot
 ```
 
 Pass CLI flags directly:
 
 ```bash
-docker run --rm \
+docker run -d \
   --device /dev/ttyACM0 \
   -v ./my-config.toml:/my-config.toml \
-  ghcr.io/meshcore-go/meshcore-bot -c /my-config.toml -v
+  ghcr.io/meshcore-go/meshcore-bot \
+  meshcore-bot -c /my-config.toml -vvv
 ```
 
 ## Configuration Reference
@@ -228,8 +229,8 @@ template = "@[{{.Sender}}] 🦈={{.PathHashSize}} 🦘={{.Hops}} 🛣️={{.Path
 match = ["(?i)^test", "(?i)^ping"]
 
 [[bot.trigger.channels]]
-name = "WesTest"
-privateKey = "89677d1a2c40f0b0d873364c25dc6259"
+name = "MyPrivateChannel"
+privateKey = "7d78eab105a663ab3504d99a0e5b1891"
 ```
 
 ### Companion Node
@@ -244,7 +245,7 @@ name = "Companion Bot"
 [[bot.trigger]]
 type = "channel"
 template = "I am running via companion! Hello {{.Sender}}"
-channels = ["#westest"]
+channels = ["#testing"]
 match = ["(?i)^!hello"]
 ```
 
