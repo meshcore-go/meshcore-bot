@@ -8,6 +8,7 @@ type MqttConfig struct {
 	Owner          *string        `json:"owner" yaml:"owner" toml:"owner"`
 	Email          *string        `json:"email" yaml:"email" toml:"email"`
 	Brokers        []BrokerConfig `json:"brokers" yaml:"brokers" toml:"broker"`
+	Advert         *MqttAdvert    `json:"advert" yaml:"advert" toml:"advert"`
 }
 
 type BrokerConfig struct {
@@ -27,6 +28,21 @@ type BrokerConfig struct {
 	Password              string   `json:"password" yaml:"password" toml:"password"`
 	Path                  string   `json:"path" yaml:"path" toml:"path"` // WebSocket path (default: /)
 	Audience              string   `json:"audience" yaml:"audience" toml:"audience"`
+}
+
+type MqttAdvert struct {
+	Enabled  bool     `json:"enabled" yaml:"enabled" toml:"enabled"`
+	Interval *int     `json:"interval,omitempty" yaml:"interval,omitempty" toml:"interval,omitempty"`
+	Lat      *float64 `json:"lat,omitempty" yaml:"lat,omitempty" toml:"lat,omitempty"`
+	Lon      *float64 `json:"lon,omitempty" yaml:"lon,omitempty" toml:"lon,omitempty"`
+}
+
+func (a *MqttAdvert) hasLatLon() bool {
+	if a.Lat == nil || a.Lon == nil {
+		return false
+	}
+
+	return *a.Lat != 0 && *a.Lon != 0
 }
 
 func (c *MqttConfig) statusIntervalSeconds() int {

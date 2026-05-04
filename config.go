@@ -79,6 +79,10 @@ type TriggerConfig struct {
 	Channels *ChannelList `json:"channels" yaml:"channels" toml:"channels"` // Channels to listen on (strings or {name, privateKey} objects)
 	Contacts *[]string    `json:"contacts" yaml:"contacts" toml:"contact"`  // What Contacts to listen in for DMs
 
+	// Retry Settings
+	RetryTimeout *int64 `json:"retryTimeout" yaml:"retryTimeout" toml:"retryTimeout"` // Stored as seconds
+	MaxRetries   *int   `json:"maxRetries" yaml:"maxRetries" toml:"maxRetries"`
+
 	// Path Hash Size: 1-4 = fixed size, 0 = mirror incoming packet's hash size, nil = default (1)
 	PathHashSize *uint8 `json:"pathHashSize,omitempty" yaml:"pathHashSize,omitempty" toml:"pathHashSize,omitempty"`
 
@@ -93,6 +97,9 @@ type BotConfig struct {
 }
 
 type Config struct {
+	// Logging
+	LogLevel *string `json:"logLevel" yaml:"logLevel" toml:"logLevel"`
+
 	// Connection Settings
 	NodeType   *string `json:"nodeType" yaml:"nodeType" toml:"nodeType"`       // kiss or companion
 	Connection *string `json:"connection" yaml:"connection" toml:"connection"` // serial://<path> or tcp://<host:port>

@@ -135,6 +135,7 @@ docker run -d \
 | `nodeType` | `"kiss"` (direct radio) or `"companion"` (piggyback on existing device) | `"kiss"` |
 | `connection` | `serial:///dev/ttyACM0` or `tcp://host:port` | `serial:///dev/ttyACM0` |
 | `baudRate` | Serial baud rate | `115200` |
+| `logLevel` | Log level: `debug`, `info`, `warn`, `error`, `trace` (overridden by `-v` flags) | `info` |
 
 ### Radio Settings (KISS only)
 
@@ -162,6 +163,17 @@ channels = ["#general", "#testing"]
 [[bot.trigger.channels]]
 name = "Secret Ops"
 privateKey = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+
+# Mix of Private channels — use the [[bot.trigger.channels]] syntax
+[[bot.trigger.channels]]
+name = "Secret Ops"
+privateKey = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+
+[[bot.trigger.channels]]
+name = "#general"
+
+[[bot.trigger.channels]]
+name = "#testing"
 ```
 
 #### Channel Trigger (`type = "channel"`)
@@ -173,6 +185,8 @@ Fires when a message is received on a channel that matches one of the `match` pa
 | `channels` | Channels to listen on |
 | `match` | Array of [Go regular expressions](https://pkg.go.dev/regexp/syntax) to match against incoming messages |
 | `template` | Go text/template for the response |
+| `retryTimeout` | Seconds to wait for a repeater echo before retrying | `5` |
+| `maxRetries` | Maximum number of send retries | `3` |
 
 #### Cron Trigger (`type = "cron"`)
 
@@ -183,6 +197,10 @@ Fires on a schedule.
 | `schedule` | Cron expression (e.g. `"*/5 * * * *"`) |
 | `channels` | Channels to send the message to |
 | `template` | Go text/template for the message |
+| `retryTimeout` | Seconds to wait for a repeater echo before retrying | `5` |
+| `maxRetries` | Maximum number of send retries | `3` |
+
+After sending a message, the bot listens for the message to be repeated back by a repeater. If no echo is heard within `retryTimeout` seconds, the message is re-sent, up to `maxRetries` times. This applies to both channel and cron triggers.
 
 ### Template Variables
 
@@ -280,6 +298,12 @@ iataCode = "AKL"
 keyFile = "mqtt_identity.key"
 statusInterval = 300
 
+[observer.advert]
+enabled = true
+interval = 86400
+lat = -36.8485
+lon = 174.7633
+
 [[observer.broker]]
 name = "US West (LetsMesh v1)"
 enabled = true
@@ -342,6 +366,15 @@ audience = "meshcore-mqtt-1.baird.io"
 | `username` | Username for basic auth |
 | `password` | Password for basic auth |
 | `audience` | Token audience (for token auth) |
+
+| Advert Field | Description |
+|--------------|-------------|
+| `enabled` | Enable periodic advert broadcasting |
+| `interval` | Seconds between adverts (default: `86400` / once per day) |
+| `lat` | Latitude in decimal degrees (optional) |
+| `lon` | Longitude in decimal degrees (optional) |
+
+When enabled, the observer broadcasts a signed companion advert over the mesh on startup and then repeats at the configured interval. This allows the node to appear in the mesh network as a visible participant. If `lat` and `lon` are provided, the advert includes location data.
 
 ## Hot Reload
 

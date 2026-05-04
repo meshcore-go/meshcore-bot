@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -133,6 +134,9 @@ func (o *MqttObserver) Start(ctx context.Context) error {
 
 	go o.heartbeatLoop(ctx)
 	go o.tokenRefreshLoop(ctx)
+	if o.cfg.Advert != nil && o.cfg.Advert.Enabled {
+		go o.advertLoop(ctx)
+	}
 
 	return nil
 }
@@ -211,6 +215,82 @@ func (o *MqttObserver) publishPacket(pkt *meshcore.Packet, rawBytes []byte, dire
 			o.log.Error("publish error", "broker", bc.cfg.Name, "error", err)
 		}
 	}
+}
+
+func (o *MqttObserver) advertLoop(ctx context.Context) {
+	// Send initial advert
+	err := o.advert()
+	if err != nil {
+		o.log.Error("initial advert error", "error", err)
+	}
+
+	advertInterval := o.cfg.Advert.Interval
+	if advertInterval == nil || *advertInterval < 1 {
+		oneDay := 86400
+		advertInterval = &oneDay
+	}
+
+	// Get tick
+	interval := time.Duration(*advertInterval) * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	// Start loop
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			err := o.advert()
+			if err != nil {
+				o.log.Error("advert error", "error", err)
+			}
+		}
+	}
+}
+
+func (o *MqttObserver) advert() error {
+	appData := meshcore.AdvertAppData{
+		Type: "CHAT",
+		Name: *o.cfg.Name,
+		Lat:  0,
+		Lon:  0,
+	}
+
+	if o.cfg.Advert.hasLatLon() {
+		appData.Lat = int32(math.Round(*o.cfg.Advert.Lat * 1_000_000.0))
+		appData.Lon = int32(math.Round(*o.cfg.Advert.Lon * 1_000_000.0))
+	}
+
+	rawAppData, err := appData.ToBytes()
+	if err != nil {
+		return err
+	}
+
+	advert := meshcore.Advert{
+		PublicKey:  o.id.Identity,
+		Timestamp:  uint32(time.Now().Unix()),
+		RawAppData: rawAppData,
+	}
+	advert.Sign(o.id.PrivateKey())
+
+	payload, err := advert.ToBytes()
+	if err != nil {
+		return err
+	}
+
+	pkt := meshcore.Packet{
+		Header:     meshcore.MakeHeader(meshcore.RouteTypeFlood, meshcore.PayloadTypeAdvert, 0),
+		PathLength: meshcore.PathHashSize - 1,
+		Payload:    payload,
+	}
+
+	data, err := pkt.ToBytes()
+	if err != nil {
+		return err
+	}
+
+	return o.radio.SendData(data)
 }
 
 func (o *MqttObserver) heartbeatLoop(ctx context.Context) {
