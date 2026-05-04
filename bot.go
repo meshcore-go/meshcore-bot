@@ -8,10 +8,14 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	meshcore "github.com/meshcore-go/meshcore-go"
 	"github.com/meshcore-go/meshcore-go/node"
 )
+
+const DefaultMaxRetries = 3
+const DefaultRetryTimeout = int64(5)
 
 type triggerEntry struct {
 	trigger  Trigger
@@ -60,6 +64,16 @@ func NewBot(cfg BotConfig, mux *node.RadioMux, sf SenderFactory) (*Bot, error) {
 
 	channelIdx := 0
 	for _, trigCfg := range cfg.Triggers {
+		// Apply Trigger defaults
+		if trigCfg.MaxRetries == nil {
+			retries := DefaultMaxRetries
+			trigCfg.MaxRetries = &retries
+		}
+		if trigCfg.RetryTimeout == nil {
+			retry := DefaultRetryTimeout
+			trigCfg.RetryTimeout = &retry
+		}
+
 		var channels []*meshcore.ChannelEntry
 		if trigCfg.Channels != nil {
 			for _, chRef := range *trigCfg.Channels {
@@ -152,17 +166,19 @@ func (b *Bot) makeCallback(ctx context.Context, entry triggerEntry) TriggerCallb
 
 		hashSize := resolvePathHashSize(entry.config.PathHashSize, evt)
 
+		retryTimeout := time.Duration(*entry.config.RetryTimeout) * time.Second
+
 		switch evt.Type {
 		case "channel":
 			ch, _ := evt.Data["ChannelEntry"].(*meshcore.ChannelEntry)
 			b.log.Debug("sending group txt", "channel", ch.Name, "pathHashSize", hashSize)
-			if err := b.sender.SendGroupText(ctx, ch, b.name, rendered, hashSize); err != nil {
+			if err := b.sender.SendGroupText(ctx, ch, b.name, rendered, hashSize, retryTimeout, *entry.config.MaxRetries); err != nil {
 				b.log.Error("send error", "error", err)
 			}
 		case "cron":
 			for _, ch := range entry.channels {
 				b.log.Debug("sending group txt", "channel", ch.Name, "pathHashSize", hashSize)
-				if err := b.sender.SendGroupText(ctx, ch, b.name, rendered, hashSize); err != nil {
+				if err := b.sender.SendGroupText(ctx, ch, b.name, rendered, hashSize, retryTimeout, *entry.config.MaxRetries); err != nil {
 					b.log.Error("send error", "error", err)
 				}
 			}

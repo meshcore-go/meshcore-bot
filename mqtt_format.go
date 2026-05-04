@@ -63,6 +63,10 @@ type statsBlock struct {
 	UptimeSecs      uint32 `json:"uptime_secs"`
 	PacketsReceived uint64 `json:"packets_received"`
 	PacketsSent     uint64 `json:"packets_sent"`
+	FloodRx         uint64 `json:"flood_rx"`
+	DirectRx        uint64 `json:"direct_rx"`
+	FloodDups       uint64 `json:"flood_dups"`
+	DirectDups      uint64 `json:"direct_dups"`
 	RecvErrors      uint64 `json:"recv_errors"`
 	QueueLen        int    `json:"queue_len"`
 }
@@ -81,7 +85,15 @@ type statusMessage struct {
 	Stats           statsBlock `json:"stats"`
 }
 
-func formatStatus(status, originName, originID string, radio RadioInfo, ds DeviceStats, packetsReceived, recvErrors uint64) ([]byte, error) {
+type PacketCounts struct {
+	Received   uint64
+	FloodRx    uint64
+	DirectRx   uint64
+	FloodDups  uint64
+	DirectDups uint64
+}
+
+func formatStatus(status, originName, originID string, radio RadioInfo, ds DeviceStats, packets PacketCounts, recvErrors uint64) ([]byte, error) {
 	var radioStr string
 	if radio.FreqHz > 0 {
 		radioStr = fmt.Sprintf("%.3f,%.1f,%d,%d",
@@ -110,7 +122,11 @@ func formatStatus(status, originName, originID string, radio RadioInfo, ds Devic
 		BatteryPercent:  batteryPct,
 		Stats: statsBlock{
 			UptimeSecs:      ds.UptimeSecs,
-			PacketsReceived: packetsReceived,
+			PacketsReceived: packets.Received,
+			FloodRx:         packets.FloodRx,
+			DirectRx:        packets.DirectRx,
+			FloodDups:       packets.FloodDups,
+			DirectDups:      packets.DirectDups,
 			RecvErrors:      recvErrors,
 		},
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,6 +25,7 @@ type brokerClient struct {
 	prefix   string
 
 	disallowed map[byte]bool
+	dedup      *meshcore.DedupCache // nil when dedup disabled for this broker
 }
 
 func (b *brokerClient) packetTopic() string {
@@ -40,7 +42,6 @@ func (b *brokerClient) isAllowed(payloadType byte) bool {
 
 type MqttObserver struct {
 	radio node.MuxRadio
-	dedup meshcore.DedupCache
 	id    meshcore.LocalIdentity
 	stats StatsProvider
 	log   *slog.Logger
@@ -50,6 +51,10 @@ type MqttObserver struct {
 	pubKeyHx        string
 	brokers         []*brokerClient
 	packetsReceived atomic.Uint64
+	floodRx         atomic.Uint64
+	directRx        atomic.Uint64
+	floodDups       atomic.Uint64
+	directDups      atomic.Uint64
 	recvErrors      *atomic.Uint64
 
 	mu     sync.Mutex
@@ -115,6 +120,9 @@ func (o *MqttObserver) Start(ctx context.Context) error {
 			prefix:     prefix,
 			disallowed: disallowed,
 		}
+		if bcfg.Dedup {
+			bc.dedup = &meshcore.DedupCache{}
+		}
 
 		o.publishStatus(ctx, bc, "online")
 		o.brokers = append(o.brokers, bc)
@@ -126,6 +134,9 @@ func (o *MqttObserver) Start(ctx context.Context) error {
 
 	go o.heartbeatLoop(ctx)
 	go o.tokenRefreshLoop(ctx)
+	if o.cfg.Advert != nil && o.cfg.Advert.Enabled {
+		go o.advertLoop(ctx)
+	}
 
 	return nil
 }
@@ -160,13 +171,12 @@ func (o *MqttObserver) onData(data []byte, snr int8, rssi int8) {
 	pkt.SNR = snr
 	pkt.RSSI = rssi
 
-	if o.dedup.HasSeen(pkt) {
-		o.log.Log(context.Background(), LevelTrace, "dedup hit, skipping",
-			"type", pkt.PayloadType())
-		return
-	}
-
 	o.packetsReceived.Add(1)
+	if pkt.IsRouteDirect() {
+		o.directRx.Add(1)
+	} else {
+		o.floodRx.Add(1)
+	}
 	o.publishPacket(pkt, data, "rx")
 }
 
@@ -187,6 +197,16 @@ func (o *MqttObserver) publishPacket(pkt *meshcore.Packet, rawBytes []byte, dire
 				"broker", bc.cfg.Name, "type", pkt.PayloadType())
 			continue
 		}
+		if bc.dedup != nil && bc.dedup.HasSeen(pkt) {
+			o.log.Log(context.Background(), LevelTrace, "dedup hit, skipping",
+				"broker", bc.cfg.Name, "type", pkt.PayloadType())
+			if pkt.IsRouteDirect() {
+				o.directDups.Add(1)
+			} else {
+				o.floodDups.Add(1)
+			}
+			continue
+		}
 		o.log.Log(context.Background(), LevelTrace, "publishing packet",
 			"broker", bc.cfg.Name, "topic", bc.packetTopic(), "direction", direction)
 		token := bc.client.Publish(bc.packetTopic(), 0, false, payload)
@@ -195,6 +215,82 @@ func (o *MqttObserver) publishPacket(pkt *meshcore.Packet, rawBytes []byte, dire
 			o.log.Error("publish error", "broker", bc.cfg.Name, "error", err)
 		}
 	}
+}
+
+func (o *MqttObserver) advertLoop(ctx context.Context) {
+	// Send initial advert
+	err := o.advert()
+	if err != nil {
+		o.log.Error("initial advert error", "error", err)
+	}
+
+	advertInterval := o.cfg.Advert.Interval
+	if advertInterval == nil || *advertInterval < 1 {
+		oneDay := 86400
+		advertInterval = &oneDay
+	}
+
+	// Get tick
+	interval := time.Duration(*advertInterval) * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	// Start loop
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			err := o.advert()
+			if err != nil {
+				o.log.Error("advert error", "error", err)
+			}
+		}
+	}
+}
+
+func (o *MqttObserver) advert() error {
+	appData := meshcore.AdvertAppData{
+		Type: "CHAT",
+		Name: *o.cfg.Name,
+		Lat:  0,
+		Lon:  0,
+	}
+
+	if o.cfg.Advert.hasLatLon() {
+		appData.Lat = int32(math.Round(*o.cfg.Advert.Lat * 1_000_000.0))
+		appData.Lon = int32(math.Round(*o.cfg.Advert.Lon * 1_000_000.0))
+	}
+
+	rawAppData, err := appData.ToBytes()
+	if err != nil {
+		return err
+	}
+
+	advert := meshcore.Advert{
+		PublicKey:  o.id.Identity,
+		Timestamp:  uint32(time.Now().Unix()),
+		RawAppData: rawAppData,
+	}
+	advert.Sign(o.id.PrivateKey())
+
+	payload, err := advert.ToBytes()
+	if err != nil {
+		return err
+	}
+
+	pkt := meshcore.Packet{
+		Header:     meshcore.MakeHeader(meshcore.RouteTypeFlood, meshcore.PayloadTypeAdvert, 0),
+		PathLength: meshcore.PathHashSize - 1,
+		Payload:    payload,
+	}
+
+	data, err := pkt.ToBytes()
+	if err != nil {
+		return err
+	}
+
+	return o.radio.SendData(data)
 }
 
 func (o *MqttObserver) heartbeatLoop(ctx context.Context) {
@@ -252,11 +348,20 @@ func (o *MqttObserver) publishStatus(ctx context.Context, bc *brokerClient, stat
 		ds = o.stats.Stats(ctx)
 	}
 
-	payload, err := formatStatus(status, o.originName, o.pubKeyHx, radio, ds, o.packetsReceived.Load(), o.recvErrors.Load())
+	packets := PacketCounts{
+		Received:   o.packetsReceived.Load(),
+		FloodRx:    o.floodRx.Load(),
+		DirectRx:   o.directRx.Load(),
+		FloodDups:  o.floodDups.Load(),
+		DirectDups: o.directDups.Load(),
+	}
+
+	payload, err := formatStatus(status, o.originName, o.pubKeyHx, radio, ds, packets, o.recvErrors.Load())
 	if err != nil {
 		o.log.Error("status format error", "error", err)
 		return
 	}
+
 	o.log.Log(ctx, LevelTrace, "publishing status",
 		"broker", bc.cfg.Name, "topic", bc.statusTopic(),
 		"json", string(payload))
@@ -323,7 +428,7 @@ func (o *MqttObserver) connectBroker(bcfg BrokerConfig, iata string) (mqtt.Clien
 	statusTopic := fmt.Sprintf("%s/%s/%s/status", prefix, iata, o.pubKeyHx)
 
 	// LWT uses minimal status (no live stats — we're about to disconnect).
-	offlinePayload, _ := formatStatus("offline", o.originName, o.pubKeyHx, RadioInfo{}, DeviceStats{}, 0, 0)
+	offlinePayload, _ := formatStatus("offline", o.originName, o.pubKeyHx, RadioInfo{}, DeviceStats{}, PacketCounts{}, 0)
 	opts.SetWill(statusTopic, string(offlinePayload), 1, bcfg.RetainStatus)
 
 	client := mqtt.NewClient(opts)
@@ -337,16 +442,19 @@ func (o *MqttObserver) connectBroker(bcfg BrokerConfig, iata string) (mqtt.Clien
 }
 
 var payloadTypeNames = map[string]byte{
-	"req":      meshcore.PayloadTypeReq,
-	"response": meshcore.PayloadTypeResponse,
-	"txt_msg":  meshcore.PayloadTypeTxtMsg,
-	"ack":      meshcore.PayloadTypeAck,
-	"advert":   meshcore.PayloadTypeAdvert,
-	"grp_txt":  meshcore.PayloadTypeGrpTxt,
-	"grp_data": meshcore.PayloadTypeGrpData,
-	"anon_req": meshcore.PayloadTypeAnonReq,
-	"path":     meshcore.PayloadTypePath,
-	"trace":    meshcore.PayloadTypeTrace,
+	"req":        meshcore.PayloadTypeReq,
+	"response":   meshcore.PayloadTypeResponse,
+	"txt_msg":    meshcore.PayloadTypeTxtMsg,
+	"ack":        meshcore.PayloadTypeAck,
+	"advert":     meshcore.PayloadTypeAdvert,
+	"grp_txt":    meshcore.PayloadTypeGrpTxt,
+	"grp_data":   meshcore.PayloadTypeGrpData,
+	"anon_req":   meshcore.PayloadTypeAnonReq,
+	"path":       meshcore.PayloadTypePath,
+	"trace":      meshcore.PayloadTypeTrace,
+	"multi_part": meshcore.PayloadTypeMultiPart,
+	"control":    meshcore.PayloadTypeControl,
+	"raw_custom": meshcore.PayloadTypeRawCustom,
 }
 
 func parseDisallowed(names []string) map[byte]bool {

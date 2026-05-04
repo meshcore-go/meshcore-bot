@@ -61,6 +61,20 @@ func main() {
 		return
 	}
 
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(cfg.Bots) == 0 && len(cfg.Observers) == 0 {
+		fmt.Fprintln(os.Stderr, "Error: no bots or observers configured")
+		os.Exit(1)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	if *verbosity > 0 {
 		level := slog.LevelDebug
 		if *verbosity >= 2 {
@@ -75,21 +89,36 @@ func main() {
 				return a
 			},
 		})))
-	}
+	} else if cfg.LogLevel != nil && *cfg.LogLevel != "" {
+		// Debug, Info, Warn, Error
+		lower := strings.ToLower(*cfg.LogLevel)
+		level := slog.LevelInfo
 
-	cfg, err := loadConfig(*configPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+		switch lower {
+		case "debug":
+			level = slog.LevelDebug
+		case "info":
+			level = slog.LevelInfo
+		case "warn":
+			level = slog.LevelWarn
+		case "error":
+			level = slog.LevelError
+		case "trace":
+			level = LevelTrace
+		default:
+			slog.Info("Invalid logging level provided, Defaulting to Info")
+		}
 
-	if len(cfg.Bots) == 0 && len(cfg.Observers) == 0 {
-		fmt.Fprintln(os.Stderr, "Error: no bots or observers configured")
-		os.Exit(1)
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: level,
+			ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+				if a.Key == slog.LevelKey && a.Value.Any().(slog.Level) == LevelTrace {
+					a.Value = slog.StringValue("TRACE")
+				}
+				return a
+			},
+		})))
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	sighup := make(chan os.Signal, 1)
 	signal.Notify(sighup, syscall.SIGHUP)

@@ -4,6 +4,7 @@ import "context"
 
 // TriggerEvent is emitted by a trigger and passed to the template engine.
 type TriggerEvent struct {
+	Cfg     TriggerConfig
 	Type    string // group, dm, cron, cap, etc
 	BotName string
 	Data    map[string]any // Trigger-specific data available to templates
