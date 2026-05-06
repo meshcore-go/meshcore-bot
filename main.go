@@ -282,7 +282,19 @@ func setupModem(ctx context.Context, cfg *Config) (*modemState, error) {
 			})
 		}
 
-		kissModem := hardware.NewKissModem(t, hardware.WithSignalReport(true), hardware.WithLogger(slog.Default()))
+		radioConfig := &hardware.RadioConfig{
+			FreqHz: uint32(*cfg.Freq * 1000000),
+			BwHz:   uint32(*cfg.Bw * 1000),
+			SF:     *cfg.SF,
+			CR:     *cfg.CR,
+		}
+
+		kissModem := hardware.NewKissModem(
+			t,
+			hardware.WithSignalReport(true),
+			hardware.WithLogger(slog.Default()),
+			hardware.WithTxAirtimeEstimator(hardware.LoRaAirtimeEstimator(radioConfig)),
+		)
 
 		connectCtx, connectCancel := context.WithTimeout(ctx, 10*time.Second)
 		defer connectCancel()
@@ -292,12 +304,7 @@ func setupModem(ctx context.Context, cfg *Config) (*modemState, error) {
 		}
 		ms.closers = append(ms.closers, kissModem)
 
-		if err := kissModem.SetRadio(&hardware.RadioConfig{
-			FreqHz: uint32(*cfg.Freq * 1000000),
-			BwHz:   uint32(*cfg.Bw * 1000),
-			SF:     *cfg.SF,
-			CR:     *cfg.CR,
-		}); err != nil {
+		if err := kissModem.SetRadio(radioConfig); err != nil {
 			ms.Close()
 			return nil, fmt.Errorf("SET_RADIO: %w", err)
 		}
