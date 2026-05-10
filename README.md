@@ -187,6 +187,8 @@ Fires when a message is received on a channel that matches one of the `match` pa
 | `template` | Go text/template for the response |
 | `retryTimeout` | Seconds to wait for a repeater echo before retrying | `5` |
 | `maxRetries` | Maximum number of send retries | `3` |
+| `charLimitBehaviour` | What to do when a message exceeds the character limit: `"truncate"` or `"split"` | — |
+| `pathHashSize` | Path hash size: `0` = copy sender's setting, `1`/`2`/`3` = bytes per hash | `1` |
 
 #### Cron Trigger (`type = "cron"`)
 
@@ -199,6 +201,8 @@ Fires on a schedule.
 | `template` | Go text/template for the message |
 | `retryTimeout` | Seconds to wait for a repeater echo before retrying | `5` |
 | `maxRetries` | Maximum number of send retries | `3` |
+| `charLimitBehaviour` | What to do when a message exceeds the character limit: `"truncate"` or `"split"` | — |
+| `pathHashSize` | Path hash size: `0` = copy sender's setting, `1`/`2`/`3` = bytes per hash | `1` |
 
 After sending a message, the bot listens for the message to be repeated back by a repeater. If no echo is heard within `retryTimeout` seconds, the message is re-sent, up to `maxRetries` times. This applies to both channel and cron triggers.
 
@@ -347,6 +351,8 @@ audience = "meshcore-mqtt-1.baird.io"
 | `iataCode` | Location identifier (e.g. airport code) |
 | `keyFile` | Path to the identity key file (created automatically if missing) |
 | `statusInterval` | Seconds between status publishes (default: 300) |
+| `owner` | Owner name included in MQTT token claims (optional) |
+| `email` | Email included in MQTT token claims (optional) |
 
 | Broker Field | Description |
 |--------------|-------------|

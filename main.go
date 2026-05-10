@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -39,6 +40,7 @@ func (f closerFunc) Close() error { f(); return nil }
 type modemState struct {
 	modem       node.Modem
 	companionCl *companionClient.Client
+	radioConfig *hardware.RadioConfig
 	stats       StatsProvider
 	recvErrors  *atomic.Uint64
 	closers     []io.Closer
@@ -130,10 +132,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	mux := node.NewRadioMux(ms.modem, node.WithMuxLogger(slog.Default()), node.WithMuxErrorHandler(func(err error) {
-		slog.Debug("mux receive error", "component", "modem", "error", err)
-		ms.recvErrors.Add(1)
-	}))
+	muxOpts := []node.MuxOption{
+		node.WithMuxLogger(slog.Default()),
+		node.WithMuxErrorHandler(func(err error) {
+			slog.Debug("mux receive error", "component", "modem", "error", err)
+			ms.recvErrors.Add(1)
+		}),
+	}
+	if ms.radioConfig != nil {
+		muxOpts = append(muxOpts,
+			node.WithMuxAirtimeEstimator(hardware.LoRaAirtimeEstimator(ms.radioConfig)),
+			node.WithMuxRetryable(func(err error) bool {
+				return errors.Is(err, hardware.ErrTxBusy)
+			}),
+		)
+	}
+	mux := node.NewRadioMux(ms.modem, muxOpts...)
 
 	bots, err := startBots(ctx, cfg, ms, mux)
 	if err != nil {
@@ -182,10 +196,17 @@ func main() {
 					slog.Error("modem reconnect failed", "error", err)
 					os.Exit(1)
 				}
-				mux = node.NewRadioMux(ms.modem, node.WithMuxLogger(slog.Default()), node.WithMuxErrorHandler(func(err error) {
-					slog.Debug("mux receive error", "component", "modem", "error", err)
-					ms.recvErrors.Add(1)
-				}))
+				muxOpts = []node.MuxOption{
+					node.WithMuxLogger(slog.Default()),
+					node.WithMuxErrorHandler(func(err error) {
+						slog.Debug("mux receive error", "component", "modem", "error", err)
+						ms.recvErrors.Add(1)
+					}),
+				}
+				if ms.radioConfig != nil {
+					muxOpts = append(muxOpts, node.WithMuxAirtimeEstimator(hardware.LoRaAirtimeEstimator(ms.radioConfig)))
+				}
+				mux = node.NewRadioMux(ms.modem, muxOpts...)
 			}
 
 			bots, err = startBots(ctx, newCfg, ms, mux)
@@ -293,7 +314,6 @@ func setupModem(ctx context.Context, cfg *Config) (*modemState, error) {
 			t,
 			hardware.WithSignalReport(true),
 			hardware.WithLogger(slog.Default()),
-			hardware.WithTxAirtimeEstimator(hardware.LoRaAirtimeEstimator(radioConfig)),
 		)
 
 		connectCtx, connectCancel := context.WithTimeout(ctx, 10*time.Second)
@@ -303,6 +323,8 @@ func setupModem(ctx context.Context, cfg *Config) (*modemState, error) {
 			return nil, fmt.Errorf("kiss connect: %w", err)
 		}
 		ms.closers = append(ms.closers, kissModem)
+
+		ms.radioConfig = radioConfig
 
 		if err := kissModem.SetRadio(radioConfig); err != nil {
 			ms.Close()
@@ -388,9 +410,11 @@ func startBots(ctx context.Context, cfg *Config, ms *modemState, mux *node.Radio
 		sf = func(_ *node.Node) Sender { return cs }
 	}
 
+	var nodeOpts []node.Option
+
 	var bots []*Bot
 	for _, botCfg := range cfg.Bots {
-		b, err := NewBot(botCfg, mux, sf)
+		b, err := NewBot(botCfg, mux, sf, nodeOpts...)
 		if err != nil {
 			stopBots(bots)
 			return nil, fmt.Errorf("creating bot %q: %w", derefStr(botCfg.Name), err)
