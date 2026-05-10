@@ -36,7 +36,7 @@ type Bot struct {
 	cancel context.CancelFunc
 }
 
-func NewBot(cfg BotConfig, mux *node.RadioMux, sf SenderFactory) (*Bot, error) {
+func NewBot(cfg BotConfig, mux *node.RadioMux, sf SenderFactory, nodeOpts ...node.Option) (*Bot, error) {
 	if cfg.Name == nil || *cfg.Name == "" {
 		return nil, fmt.Errorf("bot name is required")
 	}
@@ -45,11 +45,12 @@ func NewBot(cfg BotConfig, mux *node.RadioMux, sf SenderFactory) (*Bot, error) {
 	identity := identityFromName(botName)
 	radio := mux.NewRadio()
 	log := slog.Default().With("component", "bot", "bot", botName)
-	n := node.New(identity, radio,
+	opts := append([]node.Option{
 		node.WithErrorHandler(func(err error) {
 			log.Error("node error", "error", err)
 		}),
-	)
+	}, nodeOpts...)
+	n := node.New(identity, radio, opts...)
 
 	sender := sf(n)
 
