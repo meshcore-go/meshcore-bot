@@ -10,36 +10,8 @@ permissions:
   packages: write
 
 jobs:
-  frontend:
-    name: Build Frontend
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: web/frontend/package-lock.json
-
-      # The SPA is embedded into the binary via go:embed of web/frontend/dist,
-      # which is gitignored — every Go build needs this output first.
-      - name: Build SPA
-        working-directory: web/frontend
-        run: |
-          npm ci
-          npm run build
-
-      - uses: actions/upload-artifact@v7
-        if: ${{ !env.ACT }}
-        with:
-          name: frontend-dist
-          path: web/frontend/dist
-          if-no-files-found: error
-
   build:
     name: Build Binaries
-    needs: frontend
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -78,13 +50,6 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache-dependency-path: go.sum
-
-      - uses: actions/download-artifact@v8
-        if: ${{ !env.ACT }}
-        with:
-          name: frontend-dist
-          path: web/frontend/dist
 
       - name: Build
         env:
@@ -97,7 +62,7 @@ jobs:
           SUFFIX="${GOOS}-${GOARCH}"
           if [ -n "$GOARM" ]; then SUFFIX="${SUFFIX}v${GOARM}"; fi
           OUTPUT="meshcore-bot-${SUFFIX}${EXT}"
-          CGO_ENABLED=0 go build -ldflags "-s -w -X github.com/meshcore-go/meshcore-bot/internal/buildinfo.Version=${{ github.ref_name }}" -o "${OUTPUT}" .
+          CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o "${OUTPUT}" .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -114,7 +79,6 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          pattern: meshcore-bot-*
           path: artifacts
           merge-multiple: true
 
@@ -122,9 +86,6 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
-          # Mark SemVer pre-releases (tag contains a '-') as pre-releases so
-          # they never show as "Latest release" or outrank the stable v1.x line.
-          prerelease: ${{ contains(github.ref_name, '-') }}
           files: artifacts/*
 
   docker:
@@ -161,10 +122,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            # Only move :latest for stable tags. A SemVer pre-release (tag
-            # contains a '-', e.g. v1.1.0-alpha.1) must not hijack :latest;
-            # metadata-action already skips the major/minor tags for pre-releases.
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+            type=raw,value=latest
 
       - name: Build & Push
         uses: docker/build-push-action@v7
