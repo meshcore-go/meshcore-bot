@@ -6,9 +6,7 @@ A configurable bot framework for [MeshCore](https://github.com/meshcore-dev/Mesh
 
 - **Trigger-based architecture**: Respond to group messages, private channel messages, or on a cron schedule.
 - **Go template responses**: Access mesh data like sender, hops, path hashes, SNR, RSSI, and more.
-- **Two node types**:
-  - **KISS** (recommended): Direct radio control via hardware.
-  - **Companion** (experimental): Piggyback on an existing MeshCore device via the companion client.
+- **KISS firmware nodes**: Direct radio control via hardware (the only supported node type).
 - **Private channel support**: Join private channels using a hex-encoded PSK.
 - **MQTT integration**: Publish observed mesh traffic to MQTT brokers (e.g. [LetsMesh](https://letsmesh.net), [CoreScope](https://github.com/Kpa-clawbot/CoreScope)).
 - **Hot-reload**: Reload configuration via `SIGHUP` without restarting. Reconnects the modem if connection settings change.
@@ -108,7 +106,7 @@ docker run -d \
   ghcr.io/meshcore-go/meshcore-bot
 ```
 
-For TCP connections (e.g. companion mode via a serial-to-TCP bridge), no `--device` is needed:
+For TCP connections (e.g. a serial-to-TCP bridge to the KISS device), no `--device` is needed:
 
 ```bash
 docker run -d \
@@ -132,12 +130,12 @@ docker run -d \
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `nodeType` | `"kiss"` (direct radio) or `"companion"` (piggyback on existing device) | `"kiss"` |
+| `nodeType` | `"kiss"` (direct radio; the only supported type) | `"kiss"` |
 | `connection` | `serial:///dev/ttyACM0` or `tcp://host:port` | `serial:///dev/ttyACM0` |
 | `baudRate` | Serial baud rate | `115200` |
 | `logLevel` | Log level: `debug`, `info`, `warn`, `error`, `trace` (overridden by `-v` flags) | `info` |
 
-### Radio Settings (KISS only)
+### Radio Settings
 
 | Field | Description | Default |
 |-------|-------------|---------|
@@ -255,22 +253,6 @@ name = "MyPrivateChannel"
 privateKey = "7d78eab105a663ab3504d99a0e5b1891"
 ```
 
-### Companion Node
-
-```toml
-nodeType = "companion"
-connection = "tcp://127.0.0.1:8001"
-
-[[bot]]
-name = "Companion Bot"
-
-[[bot.trigger]]
-type = "channel"
-template = "I am running via companion! Hello {{.Sender}}"
-channels = ["#testing"]
-match = ["(?i)^!hello"]
-```
-
 ### Cron Trigger
 
 ```toml
@@ -293,22 +275,27 @@ template = "Periodic update: The time is {{.Time}}"
 
 meshcore-bot can publish observed mesh traffic to MQTT brokers. This is used by services like [LetsMesh](https://letsmesh.net) to aggregate mesh network data.
 
-Each `[[observer]]` defines an MQTT observer node that forwards packets to one or more brokers. A unique identity key file is used for authentication.
+MQTT lives under exactly one bot: define an optional `[bot.mqtt]` section on a single `[[bot]]`. At most one bot in the whole config may have it. A unique identity key file is used for authentication.
+
+Configs from before this change (root-level `[[observer]]` blocks) are migrated automatically on first load: observers merge into the first bot's `[bot.mqtt]`, and the original file is backed up alongside as `config.toml.bak-<timestamp>` (the rewrite loses comments). A config with both formats fails loudly instead of guessing.
 
 ```toml
-[[observer]]
+[[bot]]
 name = "AKL Bot"
+
+[bot.mqtt]
+name = "AKL Observer"
 iataCode = "AKL"
 keyFile = "mqtt_identity.key"
 statusInterval = 300
 
-[observer.advert]
+[bot.mqtt.advert]
 enabled = true
 interval = 86400
 lat = -36.8485
 lon = 174.7633
 
-[[observer.broker]]
+[[bot.mqtt.broker]]
 name = "US West (LetsMesh v1)"
 enabled = true
 transport = "wss"
@@ -320,7 +307,7 @@ tlsEnabled = true
 authType = "token"
 audience = "mqtt-us-v1.letsmesh.net"
 
-[[observer.broker]]
+[[bot.mqtt.broker]]
 name = "Europe (LetsMesh v1)"
 enabled = true
 transport = "wss"
@@ -332,7 +319,7 @@ tlsEnabled = true
 authType = "token"
 audience = "mqtt-eu-v1.letsmesh.net"
 
-[[observer.broker]]
+[[bot.mqtt.broker]]
 name = "CoreScope NZ"
 enabled = true
 transport = "wss"
@@ -345,7 +332,7 @@ authType = "token"
 audience = "meshcore-mqtt-1.baird.io"
 ```
 
-| Observer Field | Description |
+| MQTT Field | Description |
 |----------------|-------------|
 | `name` | Display name for this observer |
 | `iataCode` | Location identifier (e.g. airport code) |
@@ -380,7 +367,7 @@ audience = "meshcore-mqtt-1.baird.io"
 | `lat` | Latitude in decimal degrees (optional) |
 | `lon` | Longitude in decimal degrees (optional) |
 
-When enabled, the observer broadcasts a signed companion advert over the mesh on startup and then repeats at the configured interval. This allows the node to appear in the mesh network as a visible participant. If `lat` and `lon` are provided, the advert includes location data.
+When enabled, the observer broadcasts a signed chat-node advert over the mesh on startup and then repeats at the configured interval. This allows the node to appear in the mesh network as a visible participant. If `lat` and `lon` are provided, the advert includes location data.
 
 ## Hot Reload
 

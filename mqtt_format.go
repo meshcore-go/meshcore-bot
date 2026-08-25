@@ -10,6 +10,11 @@ import (
 	meshcore "github.com/meshcore-go/meshcore-go"
 )
 
+// rxTimeLayout is an RFC3339-style timestamp with microsecond precision; the
+// trailing Z07:00 emits "Z" for UTC so values are unambiguously zone-aware.
+// Always format a UTC time (time.Now().UTC()) with it.
+const rxTimeLayout = "2006-01-02T15:04:05.000000Z07:00"
+
 type packetMessage struct {
 	Timestamp  string `json:"timestamp"`
 	OriginID   string `json:"origin_id"`
@@ -29,7 +34,7 @@ type packetMessage struct {
 }
 
 func formatPacket(pkt *meshcore.Packet, rawBytes []byte, originName, originID, direction string) ([]byte, error) {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	route := "F"
 	if pkt.IsRouteDirect() {
@@ -39,7 +44,7 @@ func formatPacket(pkt *meshcore.Packet, rawBytes []byte, originName, originID, d
 	hash := pkt.PacketHash()
 
 	msg := packetMessage{
-		Timestamp:  now.Format("2006-01-02T15:04:05.000000"),
+		Timestamp:  now.Format(rxTimeLayout),
 		OriginID:   originID,
 		Origin:     originName,
 		Type:       "PACKET",
@@ -51,7 +56,7 @@ func formatPacket(pkt *meshcore.Packet, rawBytes []byte, originName, originID, d
 		Route:      route,
 		PayloadLen: fmt.Sprintf("%d", len(pkt.Payload)),
 		Raw:        strings.ToUpper(hex.EncodeToString(rawBytes)),
-		SNR:        fmt.Sprintf("%d", pkt.SNR),
+		SNR:        fmt.Sprintf("%.2f", pkt.SNR), // real dB (float32) since meshcore-go v1.1.0
 		RSSI:       fmt.Sprintf("%d", pkt.RSSI),
 		Hash:       strings.ToUpper(hex.EncodeToString(hash[:])),
 	}
@@ -111,7 +116,7 @@ func formatStatus(status, originName, originID string, radio RadioInfo, ds Devic
 
 	msg := statusMessage{
 		Status:          status,
-		Timestamp:       time.Now().Format("2006-01-02T15:04:05.000000"),
+		Timestamp:       time.Now().UTC().Format(rxTimeLayout),
 		Origin:          originName,
 		OriginID:        originID,
 		Model:           "meshcore-bot",

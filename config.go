@@ -94,18 +94,22 @@ type BotConfig struct {
 	Name *string `json:"name" yaml:"name" toml:"name"` // Name of the Node - Used in Channel Messages
 
 	Triggers []TriggerConfig `json:"triggers" yaml:"triggers" toml:"trigger"`
+
+	// MQTT publishing, owned by this bot. At most one bot in the whole app
+	// may define it (validated after load).
+	Mqtt *MqttConfig `json:"mqtt,omitempty" yaml:"mqtt,omitempty" toml:"mqtt,omitempty"`
 }
 
 type Config struct {
 	// Logging
 	LogLevel *string `json:"logLevel" yaml:"logLevel" toml:"logLevel"`
 
-	// Connection Settings
-	NodeType   *string `json:"nodeType" yaml:"nodeType" toml:"nodeType"`       // kiss or companion
+	// Connection Settings (KISS firmware nodes only)
+	NodeType   *string `json:"nodeType" yaml:"nodeType" toml:"nodeType"`       // "kiss"
 	Connection *string `json:"connection" yaml:"connection" toml:"connection"` // serial://<path> or tcp://<host:port>
 	BaudRate   *int    `json:"baudRate" yaml:"baudRate" toml:"baudRate"`       // Default 115200 if using serial
 
-	// Radio Settings - Only for KISS Radio
+	// Radio Settings
 	Freq *float64 `json:"freq" yaml:"freq" toml:"freq"` // e.g. 917.375
 	Bw   *float64 `json:"bw" yaml:"bw" toml:"bw"`       // e.g. 62.50
 	SF   *uint8   `json:"sf" yaml:"sf" toml:"sf"`       // e.g. 7
@@ -176,6 +180,9 @@ func UnmarshalConfigJson(data []byte) (*Config, error) {
 		return nil, err
 	}
 	cfg.applyDefaults()
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 
@@ -186,6 +193,9 @@ func UnmarshalConfigYaml(data []byte) (*Config, error) {
 		return nil, err
 	}
 	cfg.applyDefaults()
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 
@@ -196,5 +206,23 @@ func UnmarshalConfigToml(data []byte) (*Config, error) {
 		return nil, err
 	}
 	cfg.applyDefaults()
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
+}
+
+// validate enforces cross-field invariants after load: MQTT is app-global, so
+// at most one bot may own an [mqtt] section.
+func (c *Config) validate() error {
+	n := 0
+	for _, b := range c.Bots {
+		if b.Mqtt != nil {
+			n++
+		}
+	}
+	if n > 1 {
+		return fmt.Errorf("at most one bot may define an mqtt section, found %d", n)
+	}
+	return nil
 }

@@ -20,3 +20,20 @@ type = "channel"
 template = "@[{{.Sender}}] HashSize={{.PathHashSize}} Hops={{.Hops}} Paths={{.PathHashes | formatPathBytes}}"
 channels = ["#testing"]
 match = ["(?i)^test.*", "(?i)^ping.*"]
+
+# MQTT publishing lives under exactly one bot (app-wide). Remove [bot.mqtt]
+# to run without MQTT. A root-level [[observer]] block from an older config is
+# migrated here automatically on first load (original saved as *.bak-*).
+[bot.mqtt]
+name = "LetsMesh Observer"
+iataCode = "test"
+# keyFile = "mqtt_identity.key"   # identity seed for topics/auth; generated if missing
+statusInterval = 300
+
+[[bot.mqtt.broker]]
+name = "letsmesh"
+enabled = true
+host = "mqtt.letsmesh.net"
+port = 1883
+topicPrefix = "meshcore"
+dedup = true

@@ -14,8 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	companionClient "github.com/meshcore-go/meshcore-go/companion/client"
-	companionTransport "github.com/meshcore-go/meshcore-go/companion/transport"
 	"github.com/meshcore-go/meshcore-go/hardware"
 	kissTransport "github.com/meshcore-go/meshcore-go/hardware/transport"
 	"github.com/meshcore-go/meshcore-go/node"
@@ -39,7 +37,6 @@ func (f closerFunc) Close() error { f(); return nil }
 
 type modemState struct {
 	modem       node.Modem
-	companionCl *companionClient.Client
 	radioConfig *hardware.RadioConfig
 	stats       StatsProvider
 	recvErrors  *atomic.Uint64
@@ -69,8 +66,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if len(cfg.Bots) == 0 && len(cfg.Observers) == 0 {
-		fmt.Fprintln(os.Stderr, "Error: no bots or observers configured")
+	if len(cfg.Bots) == 0 {
+		fmt.Fprintln(os.Stderr, "Error: no bots configured")
 		os.Exit(1)
 	}
 
@@ -179,8 +176,8 @@ func main() {
 				continue
 			}
 
-			if len(newCfg.Bots) == 0 && len(newCfg.Observers) == 0 {
-				slog.Error("reloaded config has no bots or observers, keeping current config")
+			if len(newCfg.Bots) == 0 {
+				slog.Error("reloaded config has no bots, keeping current config")
 				continue
 			}
 
@@ -230,22 +227,13 @@ func modemConfigChanged(old, new_ *Config) bool {
 	if derefStr(old.NodeType) != derefStr(new_.NodeType) {
 		return true
 	}
-
-	switch derefStr(old.NodeType) {
-	case "companion":
-		return derefStr(old.Connection) != derefStr(new_.Connection) ||
-			derefInt(old.BaudRate) != derefInt(new_.BaudRate)
-	case "kiss":
-		return derefStr(old.Connection) != derefStr(new_.Connection) ||
-			derefInt(old.BaudRate) != derefInt(new_.BaudRate) ||
-			derefFloat(old.Freq) != derefFloat(new_.Freq) ||
-			derefFloat(old.Bw) != derefFloat(new_.Bw) ||
-			derefUint8(old.SF) != derefUint8(new_.SF) ||
-			derefUint8(old.CR) != derefUint8(new_.CR) ||
-			derefUint8(old.TX) != derefUint8(new_.TX)
-	}
-
-	return false
+	return derefStr(old.Connection) != derefStr(new_.Connection) ||
+		derefInt(old.BaudRate) != derefInt(new_.BaudRate) ||
+		derefFloat(old.Freq) != derefFloat(new_.Freq) ||
+		derefFloat(old.Bw) != derefFloat(new_.Bw) ||
+		derefUint8(old.SF) != derefUint8(new_.SF) ||
+		derefUint8(old.CR) != derefUint8(new_.CR) ||
+		derefUint8(old.TX) != derefUint8(new_.TX)
 }
 
 func derefStr(p *string) string {
@@ -348,73 +336,19 @@ func setupModem(ctx context.Context, cfg *Config) (*modemState, error) {
 
 		ms.modem = kissModem
 
-	case "companion":
-		var t companionTransport.Transport
-
-		switch connScheme {
-		case "serial":
-			t = companionTransport.NewSerialTransport(companionTransport.SerialConfig{
-				Port:     connAddr,
-				BaudRate: *cfg.BaudRate,
-			})
-		case "tcp":
-			t = companionTransport.NewTCPTransport(companionTransport.TCPConfig{
-				Address: connAddr,
-			})
-		}
-
-		client := companionClient.New(t)
-		ms.companionCl = client
-		client.SetErrorHandler(func(err error) {
-			slog.Error("companion error", "component", "modem", "error", err)
-		})
-
-		connectCtx, connectCancel := context.WithTimeout(ctx, 10*time.Second)
-		defer connectCancel()
-
-		if err := client.Connect(connectCtx); err != nil {
-			return nil, fmt.Errorf("companion connect: %w", err)
-		}
-		ms.closers = append(ms.closers, client)
-
-		selfInfo, err := client.AppStart(connectCtx, 1, "meshcore-bot")
-		if err != nil {
-			ms.Close()
-			return nil, fmt.Errorf("companion app start: %w", err)
-		}
-		ms.stats = NewCompanionStatsProvider(client, selfInfo)
-
-		compModem := companionClient.NewCompanionModem(ctx, client)
-		ms.closers = append(ms.closers, closerFunc(compModem.Close))
-
-		ms.modem = compModem
-
 	default:
-		return nil, fmt.Errorf("unsupported node type: %s", *cfg.NodeType)
+		return nil, fmt.Errorf("unsupported node type: %s (only \"kiss\" is supported)", *cfg.NodeType)
 	}
 
 	return ms, nil
 }
 
 func startBots(ctx context.Context, cfg *Config, ms *modemState, mux *node.RadioMux) ([]*Bot, error) {
-
-	var sf SenderFactory
-	switch *cfg.NodeType {
-	case "kiss":
-		sf = func(n *node.Node) Sender { return NewNodeSender(n) }
-	case "companion":
-		cs, err := NewCompanionSender(ctx, ms.companionCl)
-		if err != nil {
-			return nil, fmt.Errorf("companion sender init: %w", err)
-		}
-		sf = func(_ *node.Node) Sender { return cs }
-	}
-
-	var nodeOpts []node.Option
+	nodeOpts := []node.Option{}
 
 	var bots []*Bot
 	for _, botCfg := range cfg.Bots {
-		b, err := NewBot(botCfg, mux, sf, nodeOpts...)
+		b, err := NewBot(botCfg, mux, nodeOpts...)
 		if err != nil {
 			stopBots(bots)
 			return nil, fmt.Errorf("creating bot %q: %w", derefStr(botCfg.Name), err)
@@ -437,31 +371,41 @@ func stopBots(bots []*Bot) {
 }
 
 func startObservers(ctx context.Context, cfg *Config, mux *node.RadioMux, stats StatsProvider, recvErrors *atomic.Uint64) ([]*MqttObserver, error) {
-	var observers []*MqttObserver
-	for _, obsCfg := range cfg.Observers {
-		keyFile := "mqtt_identity.key"
-		if obsCfg.KeyFile != nil && *obsCfg.KeyFile != "" {
-			keyFile = *obsCfg.KeyFile
-		}
-
-		id, err := loadOrCreateIdentity(keyFile)
-		if err != nil {
-			return nil, fmt.Errorf("mqtt identity: %w", err)
-		}
-
-		obs, err := NewMqttObserver(obsCfg, mux, id, stats, recvErrors)
-		if err != nil {
-			stopObservers(observers)
-			return nil, fmt.Errorf("creating mqtt observer: %w", err)
-		}
-		if err := obs.Start(ctx); err != nil {
-			stopObservers(observers)
-			return nil, fmt.Errorf("starting mqtt observer: %w", err)
-		}
-		observers = append(observers, obs)
-		slog.Info("started mqtt observer", "name", derefStr(obsCfg.Name), "pubkey", publicKeyHex(id)[:16]+"...")
+	obsCfg := botMqttConfig(cfg)
+	if obsCfg == nil {
+		return nil, nil
 	}
-	return observers, nil
+
+	keyFile := "mqtt_identity.key"
+	if obsCfg.KeyFile != nil && *obsCfg.KeyFile != "" {
+		keyFile = *obsCfg.KeyFile
+	}
+
+	id, err := loadOrCreateIdentity(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("mqtt identity: %w", err)
+	}
+
+	obs, err := NewMqttObserver(*obsCfg, mux, id, stats, recvErrors)
+	if err != nil {
+		return nil, fmt.Errorf("creating mqtt observer: %w", err)
+	}
+	if err := obs.Start(ctx); err != nil {
+		return nil, fmt.Errorf("starting mqtt observer: %w", err)
+	}
+	slog.Info("started mqtt observer", "name", derefStr(obsCfg.Name), "pubkey", publicKeyHex(id)[:16]+"...")
+	return []*MqttObserver{obs}, nil
+}
+
+// botMqttConfig returns the single bot-owned MQTT config, or nil. Config
+// validation guarantees at most one exists.
+func botMqttConfig(cfg *Config) *MqttConfig {
+	for i := range cfg.Bots {
+		if cfg.Bots[i].Mqtt != nil {
+			return cfg.Bots[i].Mqtt
+		}
+	}
+	return nil
 }
 
 func stopObservers(observers []*MqttObserver) {
@@ -501,16 +445,22 @@ func loadConfigFromPath(path string) (*Config, error) {
 	}
 
 	ext := strings.ToLower(filepath.Ext(path))
+	var cfg *Config
 	switch ext {
 	case ".toml":
-		return UnmarshalConfigToml(data)
+		cfg, err = UnmarshalConfigToml(data)
 	case ".yaml", ".yml":
-		return UnmarshalConfigYaml(data)
+		cfg, err = UnmarshalConfigYaml(data)
 	case ".json":
-		return UnmarshalConfigJson(data)
+		cfg, err = UnmarshalConfigJson(data)
 	default:
-		return nil, fmt.Errorf("unsupported config format %q", ext)
+		err = fmt.Errorf("unsupported config format %q", ext)
 	}
+	if err != nil {
+		return nil, err
+	}
+
+	return migrateLegacyObservers(path, data, cfg)
 }
 
 func parseConnection(conn string) (scheme, addr string, ok bool) {

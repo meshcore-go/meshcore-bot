@@ -7,9 +7,6 @@ import (
 	"sync"
 	"time"
 
-	companionClient "github.com/meshcore-go/meshcore-go/companion/client"
-
-	"github.com/meshcore-go/meshcore-go/companion"
 	"github.com/meshcore-go/meshcore-go/hardware"
 )
 
@@ -104,52 +101,4 @@ func (p *kissStatsProvider) onBattery(_ byte, data []byte) {
 	p.mu.Lock()
 	p.batteryMV = binary.LittleEndian.Uint16(data[:2])
 	p.mu.Unlock()
-}
-
-type companionStatsProvider struct {
-	client *companionClient.Client
-	radio  RadioInfo
-	log    *slog.Logger
-}
-
-func NewCompanionStatsProvider(client *companionClient.Client, selfInfo companion.SelfInfoResponse) *companionStatsProvider {
-	return &companionStatsProvider{
-		client: client,
-		radio: RadioInfo{
-			FreqHz:  selfInfo.RadioFrequency,
-			BwHz:    selfInfo.RadioBandwidth,
-			SF:      selfInfo.RadioSpreadFactor,
-			CR:      selfInfo.RadioCodingRate,
-			TxPower: selfInfo.TxPower,
-		},
-		log: slog.Default().With("component", "stats", "type", "companion"),
-	}
-}
-
-func (p *companionStatsProvider) RadioConfig() RadioInfo {
-	return p.radio
-}
-
-func (p *companionStatsProvider) Stats(ctx context.Context) DeviceStats {
-	var ds DeviceStats
-
-	radioStats, err := p.client.GetStats(ctx, companion.StatsTypeRadio)
-	if err != nil {
-		p.log.Error("get radio stats", "error", err)
-	} else if radioStats.Radio != nil {
-		ds.NoiseFloor = radioStats.Radio.NoiseFloor
-	}
-
-	coreStats, err := p.client.GetStats(ctx, companion.StatsTypeCore)
-	if err != nil {
-		p.log.Error("get core stats", "error", err)
-	} else if coreStats.Core != nil {
-		ds.BatteryMV = coreStats.Core.BatteryMV
-		ds.UptimeSecs = coreStats.Core.UptimeSecs
-	}
-
-	p.log.Log(ctx, LevelTrace, "stats polled",
-		"noise_floor", ds.NoiseFloor, "battery_mv", ds.BatteryMV,
-		"uptime_secs", ds.UptimeSecs)
-	return ds
 }
